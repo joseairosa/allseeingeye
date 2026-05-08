@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>All Seeing Eye - App Design Prototype</title>
+    <link rel="icon" href="./assets/eye-mark.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell" data-density="comfortable">
+      <header class="titlebar" aria-label="window chrome">
+        <div class="traffic" aria-hidden="true">
+          <span class="traffic-dot close"></span>
+          <span class="traffic-dot minimize"></span>
+          <span class="traffic-dot zoom"></span>
+        </div>
+        <div class="titlebar-center">
+          <img src="./assets/eye-mark.svg" alt="" class="titlebar-logo" />
+          <span>all seeing eye</span>
+        </div>
+        <div class="titlebar-actions">
+          <button class="icon-button" type="button" id="densityToggle" aria-label="toggle density" title="Density">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
+          <button class="icon-button" type="button" id="themeToggle" aria-label="toggle theme" title="Theme">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3a6.8 6.8 0 0 0 0 13.6A7.2 7.2 0 0 1 12 3Z" /><path d="M19 12.4A7 7 0 1 1 11.6 5" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="primary navigation">
+        <div class="brand-lockup">
+          <img src="./assets/eye-logo.svg" alt="" class="brand-logo" />
+          <div>
+            <div class="brand-name">All Seeing Eye</div>
+            <div class="brand-meta">local index online</div>
+          </div>
+        </div>
+
+        <nav class="nav-section" aria-label="views">
+          <button type="button" class="nav-item active" data-view="inventory">
+            <span class="nav-glyph">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16" /></svg>
+            </span>
+            <span>Inventory</span>
+            <span class="nav-count">237</span>
+          </button>
+          <button type="button" class="nav-item" data-view="map">
+            <span class="nav-glyph">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2" /><circle cx="18" cy="7" r="2" /><circle cx="12" cy="18" r="2" /><path d="m8 8 3 8M16 8l-3 8M8 7h8" /></svg>
+            </span>
+            <span>Map</span>
+          </button>
+          <button type="button" class="nav-item" data-view="editor">
+            <span class="nav-glyph">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h6M8 16h5" /></svg>
+            </span>
+            <span>Editor</span>
+          </button>
+          <button type="button" class="nav-item" data-view="health">
+            <span class="nav-glyph">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h4l2-6 4 12 2-6h4" /></svg>
+            </span>
+            <span>Health</span>
+            <span class="nav-alert">2</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-scroll">
+          <section class="side-group" aria-labelledby="tools-label">
+            <div class="side-label" id="tools-label">tools</div>
+            <button type="button" class="side-row selected" data-chip-target="tool:claude-code">
+              <span class="tool-dot claude"></span>
+              <span>Claude Code</span>
+              <span class="side-count">142</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="tool:codex">
+              <span class="tool-dot codex"></span>
+              <span>Codex</span>
+              <span class="side-count">48</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="tool:cursor">
+              <span class="tool-dot cursor"></span>
+              <span>Cursor</span>
+              <span class="side-count">21</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="tool:antigravity">
+              <span class="tool-dot anti"></span>
+              <span>Antigravity</span>
+              <span class="side-count">14</span>
+            </button>
+            <button type="button" class="side-row quiet">
+              <span class="side-icon">+</span>
+              <span>Add tool</span>
+            </button>
+          </section>
+
+          <section class="side-group" aria-labelledby="types-label">
+            <div class="side-label" id="types-label">types</div>
+            <button type="button" class="side-row" data-chip-target="type:skill">
+              <svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-skill"></use></svg>
+              <span>Skills</span>
+              <span class="side-count">61</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="type:agent">
+              <svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-agent"></use></svg>
+              <span>Agents</span>
+              <span class="side-count">34</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="type:command">
+              <svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-command"></use></svg>
+              <span>Commands</span>
+              <span class="side-count">47</span>
+            </button>
+            <button type="button" class="side-row has-issue" data-chip-target="type:mcp">
+              <svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-mcp"></use></svg>
+              <span>MCP servers</span>
+              <span class="side-count">12</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="type:rule">
+              <svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-rule"></use></svg>
+              <span>Rules</span>
+              <span class="side-count">58</span>
+            </button>
+            <button type="button" class="side-row" data-chip-target="type:memory">
+              <svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-memory"></use></svg>
+              <span>Memory</span>
+              <span class="side-count">8</span>
+            </button>
+          </section>
+
+          <section class="side-group" aria-labelledby="health-label">
+            <div class="side-label" id="health-label">health</div>
+            <button type="button" class="side-row" data-view-jump="health">
+              <span class="status-ring warn"></span>
+              <span>Drift</span>
+              <span class="side-count">3 pairs</span>
+            </button>
+            <button type="button" class="side-row" data-view-jump="health">
+              <span class="status-ring error"></span>
+              <span>MCP issues</span>
+              <span class="side-count">2</span>
+            </button>
+            <button type="button" class="side-row" data-view-jump="health">
+              <span class="status-ring cold"></span>
+              <span>Cold</span>
+              <span class="side-count">18</span>
+            </button>
+          </section>
+        </div>
+
+        <footer class="sidebar-footer">
+          <button type="button" class="footer-action" id="showOnboarding">tour</button>
+          <button type="button" class="footer-action">settings</button>
+          <span>v0.1.0</span>
+        </footer>
+      </aside>
+
+      <main class="main-area">
+        <div class="main-header">
+          <div>
+            <div class="breadcrumb">local / user roots / live index</div>
+            <h1 id="viewTitle">Inventory</h1>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="command-button" id="paletteTrigger">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 18a8 8 0 1 1 5.3-14" /><path d="m14 14 6 6" /></svg>
+              <span>Search or command</span>
+              <kbd>⌘K</kbd>
+            </button>
+            <button type="button" class="icon-button" id="refreshButton" aria-label="refresh index" title="Refresh index">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M17.7 9A6 6 0 0 0 7 6.3L4 9" /><path d="M6.3 15A6 6 0 0 0 17 17.7L20 15" /></svg>
+            </button>
+          </div>
+        </div>
+
+        <section class="view active" id="inventoryView" data-view-panel="inventory" aria-labelledby="inventory-heading">
+          <h2 class="sr-only" id="inventory-heading">Component inventory</h2>
+
+          <div class="inventory-toolbar">
+            <label class="search-field">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+              <input id="inventorySearch" type="search" value="type:skill tool:claude-code" aria-label="search components" />
+            </label>
+            <button type="button" class="text-button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+              filters
+            </button>
+          </div>
+
+          <div class="filter-strip" aria-label="active filters">
+            <button type="button" class="chip selected" data-filter="tool:claude-code">Claude Code</button>
+            <button type="button" class="chip selected" data-filter="type:skill">Skill</button>
+            <button type="button" class="chip">User</button>
+            <button type="button" class="chip">Recently used</button>
+            <button type="button" class="chip">Has relations</button>
+            <button type="button" class="chip ghost">+ tag</button>
+          </div>
+
+          <div class="inventory-grid" role="table" aria-label="components">
+            <div class="grid-head" role="row">
+              <span role="columnheader">type</span>
+              <span role="columnheader">name</span>
+              <span role="columnheader">tool</span>
+              <span role="columnheader">scope</span>
+              <span role="columnheader">state</span>
+              <span role="columnheader">used</span>
+            </div>
+
+            <button type="button" class="component-row selected" role="row" data-name="spec" data-kind="skill" data-tool="Claude Code" data-scope="user" data-path="~/.claude/skills/spec/SKILL.md" data-desc="/spec - Unified Spec-Driven Development workflow" data-body="Defines the spec workflow, dispatch steps, reviewer handoffs, and verification gates. References spec-reviewer and spec-verify." data-relations="spawns agent: spec-reviewer; references skill: spec-verify">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-skill"></use></svg><strong>skill</strong></span>
+              <span role="cell" class="name-cell"><span>spec</span><small>/spec - Unified Spec-Driven Dev</small></span>
+              <span role="cell">Claude Code</span>
+              <span role="cell">user</span>
+              <span role="cell"><span class="health-pill up">up 12ms</span></span>
+              <span role="cell">2d ago</span>
+            </button>
+
+            <button type="button" class="component-row" role="row" data-name="frontend-design" data-kind="skill" data-tool="Claude Code" data-scope="user" data-path="~/.codex/memories/claude-pilot/.claude/skills/frontend-design/SKILL.md" data-desc="Production-grade frontend design guidance" data-body="Avoids generic UI defaults. Defines aesthetic direction, typography, color and layout checks." data-relations="references docs/07-visual-design.md">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-skill"></use></svg><strong>skill</strong></span>
+              <span role="cell" class="name-cell"><span>frontend-design</span><small>production UI standards</small></span>
+              <span role="cell">Claude Code</span>
+              <span role="cell">user</span>
+              <span role="cell"><span class="health-pill up">healthy</span></span>
+              <span role="cell">today</span>
+            </button>
+
+            <button type="button" class="component-row" role="row" data-name="sql-dba" data-kind="agent" data-tool="Codex" data-scope="user" data-path="~/.codex/agents/sql-dba.md" data-desc="Database review agent with read-only SQL access" data-body="A focused agent for schema inspection, query review, migration risk checks, and index recommendations." data-relations="uses mcp: postgresql-erp">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-agent"></use></svg><strong>agent</strong></span>
+              <span role="cell" class="name-cell"><span>sql-dba</span><small>schema and query specialist</small></span>
+              <span role="cell">Codex</span>
+              <span role="cell">user</span>
+              <span role="cell"><span class="health-pill unprobed">unprobed</span></span>
+              <span role="cell">3d ago</span>
+            </button>
+
+            <button type="button" class="component-row" role="row" data-name="/review-pr" data-kind="command" data-tool="Claude Code" data-scope="project" data-path=".claude/commands/review-pr.md" data-desc="Code review workflow for pull requests" data-body="Runs a review pass, checks tests, and reports findings first with file and line references." data-relations="activates agent: reviewer; references rule: code-quality">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-command"></use></svg><strong>command</strong></span>
+              <span role="cell" class="name-cell"><span>/review-pr</span><small>findings-first review</small></span>
+              <span role="cell">Claude Code</span>
+              <span role="cell">project</span>
+              <span role="cell"><span class="health-pill up">enabled</span></span>
+              <span role="cell">1d ago</span>
+            </button>
+
+            <button type="button" class="component-row issue" role="row" data-name="github" data-kind="mcp" data-tool="3 tools" data-scope="user" data-path="~/.claude.json / ~/.cursor/mcp.json / ~/.codex/config.toml" data-desc="GitHub MCP server registered in three host tools" data-body="stdio transport through npx. Claude Code and Cursor point to the same command; Codex has a different env key name." data-relations="registered by Claude Code, Cursor, Codex">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-mcp"></use></svg><strong>mcp</strong></span>
+              <span role="cell" class="name-cell"><span>github</span><small>used by 3 tools</small></span>
+              <span role="cell">3 tools</span>
+              <span role="cell">user</span>
+              <span role="cell"><span class="health-pill warn">degraded</span></span>
+              <span role="cell">142ms</span>
+            </button>
+
+            <button type="button" class="component-row" role="row" data-name="standards-typescript" data-kind="rule" data-tool="Cursor" data-scope="project" data-path=".cursor/rules/standards-typescript.mdc" data-desc="Project TypeScript conventions" data-body="Applies to TypeScript files and preserves strict mode conventions, component boundaries, and test expectations." data-relations="equivalentTo rule: claude-code/testing">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-rule"></use></svg><strong>rule</strong></span>
+              <span role="cell" class="name-cell"><span>standards-typescript</span><small>path-scoped coding rules</small></span>
+              <span role="cell">Cursor</span>
+              <span role="cell">project</span>
+              <span role="cell"><span class="health-pill up">enabled</span></span>
+              <span role="cell">5d ago</span>
+            </button>
+
+            <button type="button" class="component-row drift" role="row" data-name="CLAUDE.md" data-kind="memory" data-tool="Claude Code" data-scope="project" data-path="./CLAUDE.md" data-desc="Project memory shadowing user-level instructions" data-body="Contains project architecture, local commands, and behavioral expectations. Candidate equivalent with Cursor AGENTS.md." data-relations="equivalentTo memory: Cursor AGENTS.md">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-memory"></use></svg><strong>memory</strong></span>
+              <span role="cell" class="name-cell"><span>CLAUDE.md</span><small>project memory</small></span>
+              <span role="cell">Claude Code</span>
+              <span role="cell">project</span>
+              <span role="cell"><span class="health-pill warn">drift</span></span>
+              <span role="cell">today</span>
+            </button>
+
+            <button type="button" class="component-row disabled" role="row" data-name="promo-video" data-kind="skill" data-tool="Antigravity" data-scope="user" data-path="~/.gemini/antigravity/skills/promo-video/SKILL.md" data-desc="Disabled skill for generating product video plans" data-body="This skill has not been used in 90 days and is disabled by user choice." data-relations="none">
+              <span role="cell" class="type-cell"><svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-skill"></use></svg><strong>skill</strong></span>
+              <span role="cell" class="name-cell"><span>promo-video</span><small>cold component</small></span>
+              <span role="cell">Antigravity</span>
+              <span role="cell">user</span>
+              <span role="cell"><span class="health-pill cold">disabled</span></span>
+              <span role="cell">92d ago</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="view" id="mapView" data-view-panel="map" aria-labelledby="map-heading">
+          <div class="view-toolbar">
+            <h2 id="map-heading">Relationship map</h2>
+            <div class="segmented" role="group" aria-label="cluster mode">
+              <button type="button" class="active">tool</button>
+              <button type="button">type</button>
+              <button type="button">project</button>
+            </div>
+          </div>
+          <div class="map-canvas" aria-label="component relationship graph">
+            <svg class="map-lines" aria-hidden="true" viewBox="0 0 920 540" preserveAspectRatio="none">
+              <path class="edge accent" d="M196 148 C260 100, 340 140, 408 178" />
+              <path class="edge" d="M196 148 C244 258, 284 316, 392 348" />
+              <path class="edge dashed" d="M408 178 C540 108, 626 126, 748 196" />
+              <path class="edge accent-2" d="M392 348 C506 424, 628 412, 734 344" />
+              <path class="edge" d="M748 196 C770 256, 762 302, 734 344" />
+            </svg>
+            <div class="graph-cluster cluster-claude">Claude Code</div>
+            <div class="graph-cluster cluster-codex">Codex</div>
+            <button type="button" class="graph-node selected" style="--x: 124px; --y: 96px;">
+              <svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-skill"></use></svg>
+              <span>spec</span>
+              <small>Claude</small>
+            </button>
+            <button type="button" class="graph-node" style="--x: 338px; --y: 144px;">
+              <svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-agent"></use></svg>
+              <span>reviewer</span>
+              <small>Claude</small>
+            </button>
+            <button type="button" class="graph-node" style="--x: 296px; --y: 316px;">
+              <svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-hook"></use></svg>
+              <span>PostToolUse</span>
+              <small>Claude</small>
+            </button>
+            <button type="button" class="graph-node issue" style="--x: 686px; --y: 160px;">
+              <svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-mcp"></use></svg>
+              <span>github</span>
+              <small>3 tools</small>
+            </button>
+            <button type="button" class="graph-node" style="--x: 672px; --y: 308px;">
+              <svg class="type-icon" aria-hidden="true"><use href="./assets/type-icons.svg#icon-memory"></use></svg>
+              <span>CLAUDE.md</span>
+              <small>project</small>
+            </button>
+            <div class="map-legend">
+              <span><svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-skill"></use></svg> skill</span>
+              <span><svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-agent"></use></svg> agent</span>
+              <span><svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-mcp"></use></svg> mcp</span>
+              <span><svg class="type-mini" aria-hidden="true"><use href="./assets/type-icons.svg#icon-memory"></use></svg> memory</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="editorView" data-view-panel="editor" aria-labelledby="editor-heading">
+          <div class="editor-topline">
+            <div>
+              <h2 id="editor-heading">skill: spec</h2>
+              <p class="mono">/Users/joseairosa/.claude/skills/spec/SKILL.md</p>
+            </div>
+            <div class="editor-actions">
+              <button type="button" class="text-button quiet">discard</button>
+              <button type="button" class="primary-button">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 21H5V3h11l3 3z" /><path d="M8 21v-7h8v7M8 3v5h7" /></svg>
+                save
+              </button>
+            </div>
+          </div>
+
+          <div class="editor-layout">
+            <form class="form-pane" aria-label="schema form">
+              <div class="pane-title">
+                <span>form view</span>
+                <span class="health-pill up">valid</span>
+              </div>
+              <label class="field">
+                <span>Name</span>
+                <input value="spec" />
+              </label>
+              <label class="field">
+                <span>Description</span>
+                <textarea rows="4">/spec - Unified Spec-Driven Development workflow with review and verification gates.</textarea>
+              </label>
+              <fieldset class="field">
+                <legend>Invocation</legend>
+                <div class="segmented wide">
+                  <button type="button" class="active">model</button>
+                  <button type="button">manual</button>
+                  <button type="button">disabled</button>
+                </div>
+              </fieldset>
+              <div class="field">
+                <span>Files</span>
+                <div class="file-list">
+                  <span>SKILL.md</span>
+                  <span>steps/dispatch.md</span>
+                  <span>agents/spec-reviewer.md</span>
+                  <span>references/schema.md</span>
+                </div>
+              </div>
+              <div class="validation-box">
+                <span class="status-ring up"></span>
+                <div>
+                  <strong>validation ok</strong>
+                  <p>schema and frontmatter round-trip cleanly</p>
+                </div>
+              </div>
+            </form>
+
+            <div class="raw-pane" aria-label="raw editor preview">
+              <div class="pane-title">
+                <span>raw view</span>
+                <span class="mono">line 12</span>
+              </div>
+              <pre><code>---
+name: spec
+description: /spec - Unified Spec-Driven Development workflow
+tools:
+  - read
+  - write
+  - rg
+---
+
+# Spec workflow
+
+Use this skill when the user is starting or changing a feature.
+Read the relevant docs, create a narrow plan, then dispatch
+review and verification before code reaches the main tree.</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="healthView" data-view-panel="health" aria-labelledby="health-heading">
+          <div class="view-toolbar">
+            <h2 id="health-heading">Health</h2>
+            <button type="button" class="text-button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+              probe selected
+            </button>
+          </div>
+
+          <div class="health-layout">
+            <section class="health-pane" aria-labelledby="mcp-heading">
+              <h3 id="mcp-heading">MCP servers</h3>
+              <div class="health-table">
+                <div class="health-row head"><span>server</span><span>status</span><span>latency</span><span>calls</span></div>
+                <div class="health-row"><span>github</span><span><span class="health-pill warn">degraded</span></span><span>142 ms</span><span>1,432</span></div>
+                <div class="health-row"><span>stripe</span><span><span class="health-pill up">up</span></span><span>89 ms</span><span>204</span></div>
+                <div class="health-row"><span>playwright</span><span><span class="health-pill up">up</span></span><span>1.2 s</span><span>312</span></div>
+                <div class="health-row"><span>sentry</span><span><span class="health-pill error">down</span></span><span>timeout</span><span>7</span></div>
+              </div>
+            </section>
+
+            <section class="health-pane" aria-labelledby="drift-heading">
+              <h3 id="drift-heading">Drift</h3>
+              <div class="drift-pair">
+                <div>
+                  <strong>Memory</strong>
+                  <p class="mono">~/.claude/CLAUDE.md</p>
+                </div>
+                <span class="drift-meter"><i style="width: 32%"></i></span>
+                <div>
+                  <strong>32% diverged</strong>
+                  <p class="mono">~/.cursor/AGENTS.md</p>
+                </div>
+              </div>
+              <div class="diff-preview">
+                <p><span>-</span> Use frontend-design skill for every web view.</p>
+                <p><span>+</span> Apply design tokens before creating React components.</p>
+                <p><span>+</span> Preserve Tauri file-system boundaries in UI copy.</p>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="text-button">merge</button>
+                <button type="button" class="text-button quiet">adopt left</button>
+                <button type="button" class="text-button quiet">ignore 30d</button>
+              </div>
+            </section>
+
+            <section class="health-pane stats-pane" aria-labelledby="usage-heading">
+              <h3 id="usage-heading">Usage</h3>
+              <div class="stat-grid">
+                <div><strong>42</strong><span>skills used 7d</span></div>
+                <div><strong>57</strong><span>skills used 30d</span></div>
+                <div><strong>18</strong><span>cold 90d</span></div>
+                <div><strong>5</strong><span>plugins indexed</span></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <footer class="statusbar">
+          <span id="resultCount">237 components</span>
+          <span>scan completed 18s ago</span>
+          <span>watchers: 4 tools</span>
+          <span>privacy: local only</span>
+        </footer>
+      </main>
+
+      <aside class="quicklook open" id="quicklook" aria-label="quick look panel">
+        <div class="quicklook-header">
+          <div>
+            <div class="eyebrow" id="quickKind">skill: spec</div>
+            <h2 id="quickTitle">spec</h2>
+          </div>
+          <button type="button" class="icon-button" id="closeQuicklook" aria-label="close quick look" title="Close">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <p class="quick-desc" id="quickDesc">/spec - Unified Spec-Driven Development workflow</p>
+        <dl class="meta-grid">
+          <div><dt>Tool</dt><dd id="quickTool">Claude Code</dd></div>
+          <div><dt>Scope</dt><dd id="quickScope">user</dd></div>
+          <div><dt>Path</dt><dd class="mono" id="quickPath">~/.claude/skills/spec/SKILL.md</dd></div>
+          <div><dt>Used</dt><dd>12 times in 30d</dd></div>
+        </dl>
+        <section class="quick-section">
+          <h3>Preview</h3>
+          <p id="quickBody">Defines the spec workflow, dispatch steps, reviewer handoffs, and verification gates. References spec-reviewer and spec-verify.</p>
+        </section>
+        <section class="quick-section">
+          <h3>Relations</h3>
+          <p id="quickRelations">spawns agent: spec-reviewer; references skill: spec-verify</p>
+        </section>
+        <div class="quick-actions">
+          <button type="button" class="primary-button" id="openEditorFromQuick">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h6M8 16h5" /></svg>
+            open editor
+          </button>
+          <button type="button" class="icon-button" aria-label="pin component" title="Pin">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v8M8 7h8M10 11l-3 8 5-3 5 3-3-8" /></svg>
+          </button>
+          <button type="button" class="icon-button" aria-label="tag component" title="Tag">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 13 11 22 2 13V4h9z" /><path d="M7 8h.01" /></svg>
+          </button>
+        </div>
+      </aside>
+
+      <div class="palette-backdrop" id="palette" aria-hidden="true">
+        <div class="command-palette" role="dialog" aria-modal="true" aria-label="command palette">
+          <label class="palette-search">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+            <input id="paletteInput" value="spec" aria-label="command search" />
+          </label>
+          <div class="palette-results">
+            <button type="button" class="palette-row active" data-palette-open="editor">
+              <span class="palette-kind">skill</span>
+              <strong>spec</strong>
+              <span>Claude Code</span>
+            </button>
+            <button type="button" class="palette-row">
+              <span class="palette-kind">skill</span>
+              <strong>spec-verify</strong>
+              <span>Claude Code</span>
+            </button>
+            <button type="button" class="palette-row">
+              <span class="palette-kind">command</span>
+              <strong>/spec</strong>
+              <span>Claude Code</span>
+            </button>
+            <button type="button" class="palette-row" data-palette-open="health">
+              <span class="palette-kind action">action</span>
+              <strong>Find memory drift</strong>
+              <span>Health</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="onboarding-backdrop" id="onboarding" aria-hidden="true">
+        <div class="onboarding-panel" role="dialog" aria-modal="true" aria-label="onboarding">
+          <img src="./assets/eye-logo.svg" alt="" />
+          <h2>Detected 4 tools</h2>
+          <div class="detected-grid">
+            <span><span class="tool-dot claude"></span> Claude Code</span>
+            <span><span class="tool-dot codex"></span> Codex</span>
+            <span><span class="tool-dot cursor"></span> Cursor</span>
+            <span><span class="tool-dot anti"></span> Antigravity</span>
+          </div>
+          <div class="permission-list">
+            <span class="mono">~/.claude</span>
+            <span class="mono">~/.codex</span>
+            <span class="mono">~/.cursor</span>
+            <span class="mono">~/.gemini</span>
+          </div>
+          <div class="progress"><i style="width: 82%"></i></div>
+          <div class="inline-actions">
+            <button type="button" class="primary-button" id="finishOnboarding">continue</button>
+            <button type="button" class="text-button quiet" id="cancelOnboarding">skip</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

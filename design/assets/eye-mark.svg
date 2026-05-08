@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="All Seeing Eye mark">
+  <defs>
+    <radialGradient id="iris" cx="45%" cy="38%" r="68%">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset=".48" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </radialGradient>
+    <linearGradient id="network" x1="10" y1="14" x2="54" y2="50">
+      <stop offset="0" stop-color="#E5E7EB"/>
+      <stop offset=".48" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7.8 32 20.6 20.6 32 12.7l11.4 7.9L56.2 32 43.4 43.4 32 51.3l-11.4-7.9L7.8 32Z" stroke="url(#network)" stroke-width="1.8"/>
+    <path d="M20.6 20.6h22.8M20.6 43.4h22.8M20.6 20.6v22.8M43.4 20.6v22.8M20.6 20.6 43.4 43.4M43.4 20.6 20.6 43.4" stroke="#E5E7EB" stroke-width="1.05" opacity=".58"/>
+    <circle cx="32" cy="32" r="15.2" stroke="#60A5FA" stroke-width="2.4"/>
+    <circle cx="32" cy="32" r="9.2" stroke="#E5E7EB" stroke-width="1.6" opacity=".82"/>
+  </g>
+  <circle cx="32" cy="32" r="6.4" fill="#08111F"/>
+  <circle cx="32" cy="32" r="3.6" fill="url(#iris)"/>
+  <circle cx="36.4" cy="27.6" r="2.1" fill="#F8FAFC"/>
+  <g fill="#67E8F9">
+    <circle cx="32" cy="12.7" r="2.7"/>
+    <circle cx="32" cy="51.3" r="2.7"/>
+    <circle cx="13.2" cy="32" r="2.5"/>
+    <circle cx="50.8" cy="32" r="2.5"/>
+  </g>
+  <g fill="#E5E7EB">
+    <circle cx="20.6" cy="20.6" r="2.3"/>
+    <circle cx="43.4" cy="20.6" r="2.3"/>
+    <circle cx="20.6" cy="43.4" r="2.3"/>
+    <circle cx="43.4" cy="43.4" r="2.3"/>
+  </g>
+  <g fill="#A78BFA">
+    <circle cx="7.8" cy="32" r="2.2"/>
+    <circle cx="56.2" cy="32" r="2.2"/>
+  </g>
+</svg>
