@@ -24,6 +24,7 @@ All Seeing Eye is the inventory + editor + observatory + control plane.
 | 09 | [Features](./09-features.md) | Per-feature implementation notes |
 | 10 | [Roadmap](./10-roadmap.md) | MVP / v1 / v2 phasing |
 | 11 | [Risks](./11-risks.md) | Technical, security, UX risks and mitigations |
+| 12 | [Security](./12-security.md) | Threat model, audit taxonomy, MCP permission posture, secret detection, suppress flow |
 
 ## Reading order
 

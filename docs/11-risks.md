@@ -113,6 +113,7 @@ Things that can go wrong, the impact if they do, and the plan to handle it. Risk
 - Diagnostics export sanitises secrets even if the user opts in.
 - Telemetry (opt-in, v1+) excludes any field we recognise as a secret.
 - Internal logging never contains parsed values, only metadata.
+- Phase 7.1 ships an active secret-detection engine (see `docs/12-security.md` "Audit taxonomy A. Secret exposure"). Findings stored as redacted-preview only.
 
 ### SR-2 - Malicious component import
 
@@ -127,6 +128,8 @@ Things that can go wrong, the impact if they do, and the plan to handle it. Risk
 - Imports always require confirmation; never silent.
 - We sign our own bundle exports and verify signatures on import where present; unsigned bundles get a stronger warning.
 - We do **not** execute commands during import.
+- Phase 7.1 hook risk classification (`docs/12-security.md` "Audit taxonomy C") flags `rm -rf`, `curl | sh`, writes outside `~`, etc. on every parse.
+- Phase 7.2 MCP permission audit (`docs/12-security.md` "Audit taxonomy B") flags write-capable database / API connections distinct from read-only ones.
 
 ### SR-3 - Path traversal via tool config
 
