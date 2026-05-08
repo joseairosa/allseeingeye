@@ -13,12 +13,9 @@ use aseye_desktop_lib::{IndexHandle, Pipeline};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_scan_finds_real_claude_code_components() {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => {
-            eprintln!("skip: no HOME on this host");
-            return;
-        }
+    let Some(home) = dirs::home_dir() else {
+        eprintln!("skip: no HOME on this host");
+        return;
     };
 
     let claude_skills = home.join(".claude").join("skills");

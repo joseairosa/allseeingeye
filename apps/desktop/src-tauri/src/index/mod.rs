@@ -16,6 +16,7 @@ pub mod conn;
 pub mod error;
 pub mod migrate;
 pub mod schema;
+pub mod settings;
 #[cfg(test)]
 mod soak;
 pub mod upsert;
@@ -24,6 +25,7 @@ use std::path::PathBuf;
 
 pub use conn::{IndexHandle, ReadConnection};
 pub use error::{IndexError, Result};
+pub use settings::read_project_memory_roots;
 pub use upsert::{delete_component, lookup_component_id_by_path, upsert_component, UpsertKind};
 
 /// Per-platform default path for the index database.

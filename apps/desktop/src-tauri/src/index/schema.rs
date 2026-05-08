@@ -206,3 +206,18 @@ CREATE TABLE security_finding_suppression (
   PRIMARY KEY (component_id, pattern)
 );
 ";
+
+// Phase 14A: app-wide settings. Key/value table so the surface stays
+// flat and forward-compatible. Values are JSON strings - a setting
+// that is a list of paths is stored as `[\"~/Development\", \"~\"]`,
+// a setting that is a bool is `true`, etc. Keeping the storage
+// uniform avoids a per-setting migration each time we add a new
+// field.
+//
+// Mirrored from `docs/14-cost-and-memory.md` section 14A "Settings".
+pub const CREATE_APP_SETTINGS: &str = "
+CREATE TABLE app_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+";

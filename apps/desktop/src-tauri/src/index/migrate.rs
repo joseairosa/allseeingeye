@@ -61,6 +61,12 @@ const V2_SECURITY_TABLES: &[&str] = &[
 const V3_FINDING_EVIDENCE: &[&str] =
     &["ALTER TABLE security_finding ADD COLUMN evidence_json TEXT;"];
 
+/// Phase 14A migration: add the `app_settings` key/value table that
+/// the project memory walker reads `projectMemoryRoots` from. New
+/// table only, no existing-row impact. See
+/// `docs/14-cost-and-memory.md` section 14A for the rationale.
+const V4_APP_SETTINGS: &[&str] = &[schema::CREATE_APP_SETTINGS];
+
 /// Registered migrations. Keep sorted ascending by version. The runner
 /// refuses to open a DB whose stored version is higher than the maximum
 /// here - that means a future build wrote it.
@@ -68,6 +74,7 @@ const MIGRATIONS: &[(u32, &[&str])] = &[
     (1, V1_BOOTSTRAP),
     (2, V2_SECURITY_TABLES),
     (3, V3_FINDING_EVIDENCE),
+    (4, V4_APP_SETTINGS),
 ];
 
 /// Highest migration version known to this build.
@@ -178,6 +185,7 @@ mod tests {
             "schema_version",
             "security_finding",
             "security_finding_suppression",
+            "app_settings",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -363,7 +371,11 @@ mod tests {
             .unwrap();
         // Drop the v3 column so the simulated v2 schema is column-
         // accurate (otherwise the second `run_migrations` would not
-        // re-apply v3 since we deleted only the version row).
+        // re-apply v3 since we deleted only the version row). Also
+        // drop every table created by migrations after v3 - the
+        // simulated state is "DB pinned at v2", so any post-v3 tables
+        // must not exist or `run_migrations` will trip over them on
+        // CREATE TABLE.
         conn.execute_batch(
             "CREATE TABLE security_finding_old AS SELECT
                  id, component_id, category, pattern, severity, file_path,
@@ -371,7 +383,8 @@ mod tests {
                  suppressed, suppress_reason, suppress_until
              FROM security_finding;
              DROP TABLE security_finding;
-             ALTER TABLE security_finding_old RENAME TO security_finding;",
+             ALTER TABLE security_finding_old RENAME TO security_finding;
+             DROP TABLE IF EXISTS app_settings;",
         )
         .unwrap();
 

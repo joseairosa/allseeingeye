@@ -6,6 +6,7 @@
 
 pub mod classify;
 pub mod detect;
+pub mod project_walker;
 pub mod tools;
 pub mod types;
 

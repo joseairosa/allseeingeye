@@ -18,8 +18,9 @@ use tokio::sync::broadcast;
 
 use super::error::PipelineError;
 use super::event::{PipelineEvent, ScanReport};
-use crate::index::{upsert_component, IndexHandle, UpsertKind};
-use crate::registry::types::ToolId;
+use crate::index::{read_project_memory_roots, upsert_component, IndexHandle, UpsertKind};
+use crate::registry::project_walker::{walk_project_memory, ProjectMemoryHit};
+use crate::registry::types::{ComponentRoot, ComponentType, Format, Scope, ToolId};
 use crate::registry::{detect, registry as registry_slice};
 
 /// Scan implementation shared by `Pipeline::full_scan` and tests that
@@ -91,10 +92,114 @@ pub fn full_scan_inner(
         }
     }
 
+    // Phase 14A: project-tree memory walker. Runs after the per-tool
+    // glob walkers so user-level memory rows are written first; a
+    // duplicate path on disk (e.g. a symlink from `~/Development/foo`
+    // to `~/.claude`) would be a no-op upsert on the second pass via
+    // the hash-equal short-circuit. We always call the walker - even
+    // when no project-memory tools are detected - because Codex
+    // detection is HOME-dir based and a project-only Codex install
+    // (no `~/.codex/`) is a real configuration the user can have.
+    walk_and_upsert_project_memory(index, home, events_tx, &mut report);
+
     let _ = events_tx.send(PipelineEvent::ScanCompleted {
         report: report.clone(),
     });
     Ok(report)
+}
+
+/// Run the project-memory walker and upsert each hit.
+///
+/// Each hit is recorded as a `Memory` component with `scope = Project`
+/// and a derived `name` of `<project-dir>/<basename>` (e.g.
+/// `projectfinish/CLAUDE.md`). The name is what differentiates rows in
+/// the URI - two `CLAUDE.md` files in different projects produce
+/// distinct `aseye://claude-code/project/memory/<name>` IDs.
+fn walk_and_upsert_project_memory(
+    index: &Arc<IndexHandle>,
+    home: Option<&Path>,
+    events_tx: &broadcast::Sender<PipelineEvent>,
+    report: &mut ScanReport,
+) {
+    let descriptors = registry_slice();
+    let raw_roots = read_project_memory_roots(index);
+    let roots: Vec<PathBuf> = raw_roots.iter().map(PathBuf::from).collect();
+    let hits = walk_project_memory(&roots, home);
+
+    for hit in hits {
+        report.components_seen = report.components_seen.saturating_add(1);
+
+        let Some(descriptor) = descriptors.iter().find(|d| d.id == hit.tool) else {
+            continue;
+        };
+        let name = project_memory_name(&hit);
+        let synthetic_root = synthetic_memory_root(&hit);
+
+        match upsert_component(index, descriptor, &synthetic_root, &hit.path, &name) {
+            Ok(outcome) => {
+                match outcome.kind {
+                    UpsertKind::Inserted => {
+                        report.components_inserted = report.components_inserted.saturating_add(1);
+                    }
+                    UpsertKind::Updated => {
+                        report.components_updated = report.components_updated.saturating_add(1);
+                    }
+                    UpsertKind::Unchanged => {
+                        report.components_unchanged = report.components_unchanged.saturating_add(1);
+                    }
+                }
+                if outcome.had_parse_error {
+                    report.parse_errors = report.parse_errors.saturating_add(1);
+                    let _ = events_tx.send(PipelineEvent::ParseError {
+                        id: outcome.id,
+                        path: hit.path.to_string_lossy().into_owned(),
+                    });
+                } else {
+                    let _ = events_tx.send(PipelineEvent::ComponentUpserted {
+                        id: outcome.id,
+                        kind: outcome.kind,
+                    });
+                }
+            }
+            Err(err) => {
+                tracing::warn!(path = ?hit.path, ?err, "project memory upsert failed");
+            }
+        }
+    }
+}
+
+/// Derive `<project-dir>/<basename>` from a walker hit. The project
+/// directory is the immediate parent of the matched file; we drop any
+/// further path context so rows stay short and grep-friendly. Two
+/// projects with the same final dir name (e.g. `~/work/foo` and
+/// `~/personal/foo`) still produce distinct URIs because the path
+/// hash on the index side disambiguates them.
+fn project_memory_name(hit: &ProjectMemoryHit) -> String {
+    let parent = hit
+        .path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("project");
+    format!("{parent}/{}", hit.basename)
+}
+
+/// Build a synthetic `ComponentRoot` for a project-memory hit. The
+/// registry's existing `Memory` roots are user-scope (Claude Code,
+/// Antigravity) or only declare a relative `AGENTS.md` glob (Codex);
+/// neither matches a project-tree file. We synthesize one here so the
+/// upsert path can stamp the right scope, format, and flavour without
+/// lying about which static descriptor the row came from.
+fn synthetic_memory_root(hit: &ProjectMemoryHit) -> ComponentRoot {
+    ComponentRoot {
+        component_type: ComponentType::Memory,
+        path_pattern: hit.path.to_string_lossy().into_owned(),
+        format: Format::Markdown,
+        flavour: Some(hit.basename.clone()),
+        scope: Scope::Project,
+        is_folder: false,
+        key_path: None,
+    }
 }
 
 /// Compute a component identity name for a path matched during scan.
