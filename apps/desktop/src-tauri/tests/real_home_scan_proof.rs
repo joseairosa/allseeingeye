@@ -43,8 +43,7 @@ async fn full_scan_finds_real_claude_code_components() {
     // `home: None` (this is the call shape Pipeline::start_with_home
     // uses in lib.rs::run).
     let index = Arc::new(IndexHandle::open_in_memory().expect("open in-memory db"));
-    let pipeline =
-        Pipeline::start_with_home(Arc::clone(&index), None).expect("start pipeline");
+    let pipeline = Pipeline::start_with_home(Arc::clone(&index), None).expect("start pipeline");
 
     let report = pipeline.full_scan().expect("scan should succeed");
 
