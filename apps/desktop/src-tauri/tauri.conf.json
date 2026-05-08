@@ -18,7 +18,7 @@
         "minWidth": 1024,
         "minHeight": 640,
         "decorations": true,
-        "transparent": true,
+        "transparent": false,
         "titleBarStyle": "Transparent",
         "hiddenTitle": true,
         "fullscreen": false,
