@@ -612,6 +612,28 @@ kbd {
   background: var(--bg-elev-1);
 }
 
+/* Scroll container that wraps the virtualised rows. The grid-head is
+   a sibling that stays pinned at the top of `.inventory-grid` while
+   only this element scrolls. A fixed `max-height` sized off the
+   viewport gives the virtualizer a stable scroll surface without
+   coupling to the parent flex/grid layout. The `.view` parent's own
+   `overflow: auto` still handles toolbar/chip overflow on tiny windows. */
+.inventory-grid-virtual {
+  position: relative;
+  overflow: auto;
+  max-height: calc(100vh - 280px);
+}
+
+/* Row positioning under virtualisation. The row is taken out of the
+   normal flow and pinned via an inline `transform: translateY(...)`
+   computed by `useVirtualizer`. Height stays defined by `--row-height`
+   so the CSS grid columns continue to align with `.grid-head`. */
+.component-row.virtual {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
 .grid-head,
 .component-row {
   display: grid;

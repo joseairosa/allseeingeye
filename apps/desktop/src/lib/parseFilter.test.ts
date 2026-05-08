@@ -48,4 +48,10 @@ describe("parseSearchQuery", () => {
     expect(filter.query).toBeNull();
     expect(freeText).toBe("");
   });
+
+  it("tolerates whitespace after the colon for known prefixes", () => {
+    const { filter } = parseSearchQuery("tool: claude-code type:  skill");
+    expect(filter.toolId).toBe("claude-code");
+    expect(filter.kind).toBe("skill");
+  });
 });

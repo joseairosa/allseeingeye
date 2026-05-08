@@ -1,7 +1,9 @@
-import { useMemo } from "react";
+import { memo, useMemo, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUi } from "@/store/ui";
 import { useComponents } from "@/ipc/hooks";
 import { parseSearchQuery } from "@/lib/parseFilter";
+import { toggleFilterPrefix } from "@/lib/filterChip";
 import { formatRelativeTime } from "@/lib/relativeTime";
 import { FiltersIcon, SearchIcon, TypeIcon, type TypeIconId } from "@/components/icons";
 import type {
@@ -28,6 +30,16 @@ const TOOL_DISPLAY_NAME: Record<ToolId, string> = {
   antigravity: "Antigravity",
 };
 
+/** Per-density row heights. Match `--row-height` from design-system.css. */
+const ROW_HEIGHT_COMFORTABLE = 56;
+const ROW_HEIGHT_COMPACT = 40;
+
+/** Virtualizer overscan: render this many extra rows above/below viewport. */
+const OVERSCAN = 6;
+
+/** Skeleton row count rendered above the virtualizer while pending. */
+const SKELETON_COUNT = 6;
+
 /**
  * Display label for a `ComponentSummary`. Prefers the optional
  * `displayName` (set by parsers that surface a slash-command label or
@@ -47,6 +59,11 @@ const FILTER_CHIPS = [
 
 interface RowProps {
   row: ComponentSummary;
+  selected: boolean;
+  /** Inline transform produced by the virtualizer for absolute positioning. */
+  transform: string;
+  onSelect: (id: string) => void;
+  onOpenEditor: () => void;
 }
 
 function rowFlags(row: ComponentSummary, selected: boolean): string {
@@ -56,13 +73,19 @@ function rowFlags(row: ComponentSummary, selected: boolean): string {
   return parts.join(" ");
 }
 
-function Row({ row }: RowProps) {
-  const selectedId = useUi((s) => s.selectedComponentId);
-  const selectComponent = useUi((s) => s.selectComponent);
-  const setView = useUi((s) => s.setView);
-
-  const selected = selectedId === row.id;
-  const className = `component-row ${rowFlags(row, selected)}`.trim();
+/**
+ * Inventory row. `React.memo` keeps stable rows from re-rendering when
+ * the parent re-renders (selection change moves the `selected` flag on
+ * exactly one old + one new row, leaving the rest untouched).
+ */
+const Row = memo(function Row({
+  row,
+  selected,
+  transform,
+  onSelect,
+  onOpenEditor,
+}: RowProps) {
+  const className = `component-row virtual ${rowFlags(row, selected)}`.trim();
   const iconId: TypeIconId = TYPE_TO_ICON[row.kind] ?? "icon-skill";
 
   return (
@@ -71,8 +94,9 @@ function Row({ row }: RowProps) {
       className={className}
       role="row"
       aria-selected={selected}
-      onClick={() => selectComponent(row.id)}
-      onDoubleClick={() => setView("editor")}
+      onClick={() => onSelect(row.id)}
+      onDoubleClick={onOpenEditor}
+      style={{ transform }}
     >
       <span role="cell" className="type-cell">
         <TypeIcon id={iconId} />
@@ -92,12 +116,14 @@ function Row({ row }: RowProps) {
       <span role="cell">{formatRelativeTime(row.lastUsedAt)}</span>
     </button>
   );
-}
+});
 
 function SkeletonRows({ count }: { count: number }) {
   // Render an explicit skeleton row so the grid keeps its height while
   // the first IPC round-trip is in flight. The visual is a CSS-only
   // shimmer driven by `.component-row.skeleton` (defined in design-system.css).
+  // Skeletons are NOT virtualised - a fixed batch sits at the top of the
+  // grid until the first payload lands.
   const items = Array.from({ length: count }, (_, idx) => idx);
   return (
     <>
@@ -146,15 +172,83 @@ function chipStates(
     "tool:claude-code": { active: filterToolId === "claude-code" },
     "type:skill": { active: filterKind === "skill" },
     "scope:user": { active: filterScope === "user" },
+    // `last:7d` and `has:relations` are not yet plumbed through to the
+    // backend filter, so chip activity reflects raw search-string presence.
     "last:7d": { active: false },
     "has:relations": { active: false },
   };
+}
+
+interface VirtualBodyProps {
+  rows: ComponentSummary[];
+  rowHeight: number;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onOpenEditor: () => void;
+}
+
+/**
+ * Virtualised body of the inventory grid.
+ *
+ * The hook is split out so `useVirtualizer` only mounts when we actually
+ * have data - avoids spinning up a virtualizer while skeletons render.
+ * The scroll container (`.inventory-grid-virtual`) is the
+ * `getScrollElement`; the inner `<div>` with explicit `height` is the
+ * total content surface; rows position absolutely via inline transform.
+ */
+function VirtualBody({
+  rows,
+  rowHeight,
+  selectedId,
+  onSelect,
+  onOpenEditor,
+}: VirtualBodyProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLButtonElement>({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: OVERSCAN,
+  });
+
+  const totalSize = virtualizer.getTotalSize();
+  const items = virtualizer.getVirtualItems();
+
+  return (
+    <div
+      ref={scrollRef}
+      className="inventory-grid-virtual"
+      role="rowgroup"
+    >
+      <div style={{ height: `${totalSize}px`, position: "relative", width: "100%" }}>
+        {items.map((vItem) => {
+          const row = rows[vItem.index];
+          if (!row) return null;
+          return (
+            <Row
+              key={row.id}
+              row={row}
+              selected={row.id === selectedId}
+              transform={`translateY(${vItem.start}px)`}
+              onSelect={onSelect}
+              onOpenEditor={onOpenEditor}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export function InventoryView() {
   const search = useUi((s) => s.search);
   const setSearch = useUi((s) => s.setSearch);
   const view = useUi((s) => s.view);
+  const density = useUi((s) => s.density);
+  const selectedId = useUi((s) => s.selectedComponentId);
+  const selectComponent = useUi((s) => s.selectComponent);
+  const setView = useUi((s) => s.setView);
 
   const parsed = useMemo(() => parseSearchQuery(search), [search]);
   const { data, isPending, isError } = useComponents(parsed.filter);
@@ -165,6 +259,15 @@ export function InventoryView() {
     parsed.filter.kind,
     parsed.filter.scope,
   );
+
+  const rowHeight =
+    density === "compact" ? ROW_HEIGHT_COMPACT : ROW_HEIGHT_COMFORTABLE;
+
+  const rows = data ?? [];
+  const showEmpty = !isPending && !isError && rows.length === 0;
+  const showVirtualBody = !isPending && !isError && rows.length > 0;
+
+  const handleOpenEditor = (): void => setView("editor");
 
   return (
     <section
@@ -193,15 +296,20 @@ export function InventoryView() {
       </div>
 
       <div className="filter-strip" aria-label="active filters">
-        {FILTER_CHIPS.map((chip) => (
-          <button
-            key={chip.id}
-            type="button"
-            className={`chip${chips[chip.id]?.active ? " selected" : ""}`}
-          >
-            {chip.label}
-          </button>
-        ))}
+        {FILTER_CHIPS.map((chip) => {
+          const active = chips[chip.id]?.active ?? false;
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              aria-pressed={active}
+              className={`chip${active ? " selected" : ""}`}
+              onClick={() => setSearch(toggleFilterPrefix(search, chip.id))}
+            >
+              {chip.label}
+            </button>
+          );
+        })}
         <button type="button" className="chip ghost">+ tag</button>
       </div>
 
@@ -215,7 +323,7 @@ export function InventoryView() {
           <span role="columnheader">used</span>
         </div>
 
-        {isPending ? <SkeletonRows count={6} /> : null}
+        {isPending ? <SkeletonRows count={SKELETON_COUNT} /> : null}
 
         {isError ? (
           <div className="component-row" role="row" aria-live="polite">
@@ -226,7 +334,7 @@ export function InventoryView() {
           </div>
         ) : null}
 
-        {!isPending && !isError && data && data.length === 0 ? (
+        {showEmpty ? (
           <div className="component-row" role="row" aria-live="polite">
             <span role="cell" className="name-cell">
               <span>no matches</span>
@@ -235,9 +343,15 @@ export function InventoryView() {
           </div>
         ) : null}
 
-        {!isPending && !isError && data
-          ? data.map((row) => <Row key={row.id} row={row} />)
-          : null}
+        {showVirtualBody ? (
+          <VirtualBody
+            rows={rows}
+            rowHeight={rowHeight}
+            selectedId={selectedId}
+            onSelect={selectComponent}
+            onOpenEditor={handleOpenEditor}
+          />
+        ) : null}
       </div>
     </section>
   );

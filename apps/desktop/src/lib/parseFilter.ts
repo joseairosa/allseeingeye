@@ -70,6 +70,11 @@ export interface ParsedSearch {
  * free-text. Unknown values for known prefixes (e.g. `type:bogus`) fall
  * through to free-text rather than producing an error - the user sees
  * an empty grid and self-corrects.
+ *
+ * Whitespace tolerance: `tool: claude-code` (space after colon) is
+ * folded into `tool:claude-code` before tokenising, so the chip
+ * round-trips even when the user types loose syntax. Multiple spaces
+ * are collapsed.
  */
 export function parseSearchQuery(input: string): ParsedSearch {
   const filter: ComponentFilter = {
@@ -83,7 +88,12 @@ export function parseSearchQuery(input: string): ParsedSearch {
   };
   const freeTokens: string[] = [];
 
-  for (const raw of input.split(/\s+/)) {
+  // Collapse `prefix: value` -> `prefix:value` so a stray space after
+  // the colon does not orphan the prefix from its value. Only the
+  // immediate next whitespace run is consumed.
+  const normalised = input.replace(/([A-Za-z]+):\s+(\S)/g, "$1:$2");
+
+  for (const raw of normalised.split(/\s+/)) {
     const token = raw.trim();
     if (!token) continue;
 
