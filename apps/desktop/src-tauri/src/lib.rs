@@ -30,6 +30,21 @@ pub use fs::{
     safe_atomic_write, safe_atomic_write_with_options, write_sidecar_backup, FsError,
 };
 
+// Phase 1.3: re-export the file watcher public surface at crate root.
+// IPC handlers in Phase 1.6 will call `Watcher::start(...)` and
+// `subscribe()` without reaching into the private module path. Mirrors
+// the pattern used for `IndexHandle` and `safe_atomic_write` above.
+pub use watcher::{WatchEvent, Watcher, WatcherError};
+
+// Phase 1.4: re-export the parser dispatch surface at crate root so the
+// IPC handlers (Phase 1.6) can call `aseye_desktop_lib::parse_file(...)`
+// without reaching into the private module path. Mirrors how
+// `IndexHandle`, `safe_atomic_write`, and `Watcher` are exposed.
+pub use parser::{
+    parse_bytes, parse_file, ParseError, ParseWarning, ParseWarningKind, ParsedComponent,
+    MAX_PARSE_SIZE,
+};
+
 use tauri::Manager;
 
 #[tauri::command]

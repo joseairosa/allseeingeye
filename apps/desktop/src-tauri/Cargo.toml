@@ -31,7 +31,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Phase 1.1: tool registry + detection
-ts-rs = { version = "10", features = ["serde-compat"] }
+# `serde-json-impl` (Phase 1.4) makes `ts-rs` derive bindings that map
+# `serde_json::Value` to `unknown` on the TS side. Required for the
+# parser's `ParsedComponent.structured` and `frontmatter` fields.
+ts-rs = { version = "10", features = ["serde-compat", "serde-json-impl"] }
 dirs = "5"
 which = "6"
 
@@ -54,8 +57,36 @@ parking_lot = "0.12"
 # write (`<path>.aseye-tmp-<uuid>`). Pinned to v1.x latest stable.
 uuid = { version = "1", features = ["v4"] }
 
+# Phase 1.3: file watcher.
+# `notify` v6 is the canonical cross-platform watcher (FSEvents on macOS,
+# inotify on Linux, ReadDirectoryChangesW on Windows). v6 is the current
+# maintained line; v7 is unreleased at time of writing.
+notify = "6"
+# `tokio` is already pulled in transitively by Tauri but we depend on
+# `sync::broadcast`, `time::sleep_until`, and the multi-threaded runtime
+# explicitly here for the coalescer task. Declaring it makes our intent
+# auditable and protects us if a future Tauri release narrows its feature
+# set.
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
+
+# Phase 1.4: parser dispatch (JSON / TOML / YAML / Markdown+frontmatter / MDC).
+# `serde_yaml` parses YAML into `serde_json::Value` so all formats produce a
+# single uniform downstream shape. v0.9 is the current maintained line.
+serde_yaml = "0.9"
+# `toml` parses Codex `config.toml` and any other TOML config we encounter.
+# v0.8 is the API we standardise on; pinning it here as a direct dep makes
+# the version explicit instead of inheriting it transitively.
+toml = "0.8"
+# `sha2` produces the SHA-256 content hash that drives change detection
+# per `docs/05-data-architecture.md`. v0.10 is current and already pulled
+# in transitively; declaring it explicitly makes the dependency auditable.
+sha2 = "0.10"
+
 [dev-dependencies]
 tempfile = "3"
+# `proptest` powers the round-trip property tests for the parser layer:
+# parse(emit(value)) == value (structurally). Dev-only.
+proptest = "1"
 
 [features]
 default = ["custom-protocol"]
