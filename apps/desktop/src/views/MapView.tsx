@@ -1,4 +1,17 @@
+/**
+ * Map view (Phase 4.3 stub).
+ *
+ * MVP ships an illustrative static graph - the real Sigma.js / WebGL
+ * implementation lands in v1 (`docs/10-roadmap.md` Phase v1 "Map view").
+ * Cluster labels are hydrated from the live `useTools()` result so the
+ * stub at least reflects the user's actual tool inventory.
+ *
+ * The static node positions and edges are intentional: they demonstrate
+ * the visual language (clusters, edges with severity tints, type-icon
+ * glyphs) so the design is locked while the backing data is built out.
+ */
 import { useUi } from "@/store/ui";
+import { useTools } from "@/ipc/hooks";
 import { TypeIcon } from "@/components/icons";
 
 interface NodeProps {
@@ -31,6 +44,11 @@ function GraphNode({ x, y, iconId, name, small, selected, issue }: NodeProps) {
 export function MapView() {
   const view = useUi((s) => s.view);
   const isActive = view === "map";
+  const tools = useTools();
+  const detectedToolNames =
+    tools.data
+      ?.filter((t) => t.detected)
+      .map((t) => t.displayName) ?? [];
 
   return (
     <section
@@ -42,10 +60,23 @@ export function MapView() {
       <div className="view-toolbar">
         <h2 id="map-heading">Relationship map</h2>
         <div className="segmented" role="group" aria-label="cluster mode">
-          <button type="button" className="active">tool</button>
-          <button type="button">type</button>
-          <button type="button">project</button>
+          <button type="button" className="active" disabled>tool</button>
+          <button type="button" disabled>type</button>
+          <button type="button" disabled>project</button>
         </div>
+      </div>
+
+      <div
+        className="map-stub-banner"
+        role="note"
+        aria-live="polite"
+      >
+        <strong>Illustrative stub.</strong> Real graph rendering lands in v1.
+        {detectedToolNames.length > 0 ? (
+          <span>
+            {" "}Currently indexing: {detectedToolNames.join(", ")}.
+          </span>
+        ) : null}
       </div>
 
       <div className="map-canvas" aria-label="component relationship graph">

@@ -2289,3 +2289,19 @@ body.light pre {
     animation-duration: 1ms !important;
   }
 }
+
+/* Phase 4.3 - illustrative-stub banner shown above the static graph */
+.map-stub-banner {
+  margin: var(--s-3, 12px) 0 var(--s-4, 16px);
+  padding: var(--s-3, 12px) var(--s-4, 16px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.map-stub-banner strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
