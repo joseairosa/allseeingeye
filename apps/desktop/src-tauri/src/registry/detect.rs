@@ -18,9 +18,17 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 /// Detect every registered tool in registry order.
 #[must_use]
 pub fn detect_all() -> Vec<DetectedTool> {
+    detect_all_with_home(None)
+}
+
+/// Detect every registered tool with a HOME override. Production
+/// callers pass `None` (system HOME); tests pass a tempdir so detection
+/// doesn't read the developer's real `~/.claude/`.
+#[must_use]
+pub fn detect_all_with_home(home: Option<&Path>) -> Vec<DetectedTool> {
     super::registry()
         .iter()
-        .map(|d| detect_one(d, None))
+        .map(|d| detect_one(d, home))
         .collect()
 }
 

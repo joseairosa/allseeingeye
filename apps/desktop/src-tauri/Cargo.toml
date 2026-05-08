@@ -82,6 +82,14 @@ toml = "0.8"
 # in transitively; declaring it explicitly makes the dependency auditable.
 sha2 = "0.10"
 
+# Phase 1.6: path classifier glob matching. `globset` ships gitignore-style
+# semantics including `**` (recursive) and `*` (single segment), which we
+# need to map filesystem paths to `ComponentRoot` patterns. Hand-rolling a
+# `**` matcher is non-trivial; the crate is well-maintained (BurntSushi)
+# and pulls in only `bstr` + `regex-automata`, both already in the dep
+# graph indirectly.
+globset = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
 # `proptest` powers the round-trip property tests for the parser layer:

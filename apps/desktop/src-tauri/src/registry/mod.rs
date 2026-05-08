@@ -4,6 +4,7 @@
 //! Claude Code, Codex, Cursor, and Antigravity, plus a runtime detection
 //! probe that reports which tools are present on the local machine.
 
+pub mod classify;
 pub mod detect;
 pub mod tools;
 pub mod types;
@@ -14,6 +15,7 @@ use std::sync::OnceLock;
 // crate calls through `registry::*`. Anything else lives behind
 // `registry::types::*` so we don't accumulate dead `pub use` lines as
 // later phases land.
+pub use classify::classify_path;
 pub use detect::detect_all;
 pub use types::{DetectedTool, ToolDescriptor};
 

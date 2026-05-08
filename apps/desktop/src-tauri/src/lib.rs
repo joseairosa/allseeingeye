@@ -10,6 +10,7 @@ mod index;
 mod ipc;
 mod mcp;
 mod parser;
+mod pipeline;
 mod registry;
 mod watcher;
 
@@ -45,6 +46,12 @@ pub use parser::{
     MAX_PARSE_SIZE,
 };
 
+// Phase 1.6: re-export the live-index pipeline + IPC surface at crate
+// root.
+pub use pipeline::{Pipeline, PipelineError, PipelineEvent, ScanContext, ScanReport};
+
+use std::sync::Arc;
+
 use tauri::Manager;
 
 #[tauri::command]
@@ -72,9 +79,49 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 window.open_devtools();
             }
+
+            // Open the index DB and start the live-index pipeline. Both
+            // are non-blocking constructors; the pipeline spawns its
+            // own background dispatch task on `start_with_home`.
+            let index =
+                IndexHandle::open(default_db_path()).expect("failed to open index database");
+            let index = Arc::new(index);
+            let pipeline = Pipeline::start_with_home(Arc::clone(&index), None)
+                .expect("failed to start pipeline");
+            let scan_ctx = pipeline.scan_context();
+            let events_rx = pipeline.subscribe_events();
+
+            // Bridge pipeline events to Tauri events. The bridge runs
+            // until the pipeline's broadcaster is dropped.
+            ipc::spawn_event_bridge(app.handle().clone(), events_rx);
+
+            // Tauri owns these; cloning the Arc keeps the pipeline
+            // alive even though the `Pipeline` itself is not exposed
+            // through state (it is not `Sync` because of the watcher).
+            // We leak the pipeline into a long-lived heap allocation so
+            // the dispatch task and the watcher continue running. The
+            // intentional leak is fine because there is exactly one
+            // pipeline per process and it is meant to live for the
+            // lifetime of the app.
+            //
+            // We could `Box::leak(Box::new(pipeline))` but using the
+            // managed-state pattern lets us hand the pipeline back via
+            // `app.state::<...>()` later if needed.
+            let _ = Box::leak(Box::new(pipeline));
+
+            app.manage(index);
+            app.manage(scan_ctx);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![ping, ipc::list_tools])
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            ipc::commands::list_tools,
+            ipc::commands::list_components,
+            ipc::commands::get_component,
+            ipc::commands::search,
+            ipc::commands::start_full_scan,
+            ipc::commands::get_health_summary,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
