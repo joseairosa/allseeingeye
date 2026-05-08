@@ -1,0 +1,52 @@
+# cargo-deny config.
+#
+# Run locally:
+#   cargo install --locked cargo-deny
+#   cargo deny --workspace --all-features check
+#
+# CI runs this on every PR via .github/workflows/security.yml.
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on any unmaintained / yanked / vulnerable advisory in the GH
+# advisory DB. We deliberately don't ignore any advisory by default;
+# every exception lives here with a justification + expiry date.
+yanked = "deny"
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# Allowlist of crate sources. Anything outside this gets denied.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[licenses]
+# Allowlist drives every license decision. Add only well-understood,
+# permissive licenses. Copyleft (GPL, AGPL, LGPL) is denied by default.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "CC0-1.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "OpenSSL",
+    "MPL-2.0",
+]
+confidence-threshold = 0.93
+
+# Per-crate exceptions only when a crate ships under a license combo
+# we can't generically resolve. None today.
+exceptions = []
