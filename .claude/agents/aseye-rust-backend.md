@@ -63,6 +63,7 @@ When done, your final message must include:
 
 ## Quality bar
 
+- `cargo fmt --all -- --check` clean. CI gates on this and rejects unformatted code. Always run `cargo fmt --all` before declaring done.
 - `cargo check` clean.
 - `cargo clippy --all-targets -- -D warnings` clean.
 - `cargo test` clean. Each new public function has at least one test.
