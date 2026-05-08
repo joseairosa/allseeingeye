@@ -152,4 +152,3 @@ pub struct DetectedTool {
     /// on the local filesystem (with `~/` expanded).
     pub existing_root_paths: Vec<String>,
 }
-

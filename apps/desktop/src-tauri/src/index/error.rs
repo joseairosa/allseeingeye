@@ -26,7 +26,9 @@ pub enum IndexError {
     /// The on-disk schema version is newer than the embedded migrations
     /// know how to run. We refuse to open such a database to avoid
     /// silently corrupting data written by a future build.
-    #[error("schema version mismatch: db is at v{found}, embedded migrations only know up to v{known}")]
+    #[error(
+        "schema version mismatch: db is at v{found}, embedded migrations only know up to v{known}"
+    )]
     SchemaVersionMismatch {
         /// Version stored in the on-disk `schema_version` table.
         found: u32,

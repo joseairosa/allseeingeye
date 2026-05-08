@@ -13,7 +13,7 @@
 //!   3. Each statement may itself be multi-statement; we drive them with
 //!      `execute_batch`, so semicolon-separated statements work.
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::error::{IndexError, Result};
 use super::schema;
@@ -57,8 +57,11 @@ fn current_version(conn: &Connection) -> Result<u32> {
     // has run. We reuse `schema::CREATE_SCHEMA_VERSION` as the source of
     // truth and patch in the IF NOT EXISTS guard so the bootstrap and
     // the resume path stay literally identical.
-    conn.execute_batch(&schema::CREATE_SCHEMA_VERSION
-        .replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1))?;
+    conn.execute_batch(&schema::CREATE_SCHEMA_VERSION.replacen(
+        "CREATE TABLE",
+        "CREATE TABLE IF NOT EXISTS",
+        1,
+    ))?;
 
     let v: Option<u32> = conn
         .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {

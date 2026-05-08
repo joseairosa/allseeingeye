@@ -104,7 +104,11 @@ impl IndexHandle {
         // Build the read pool first. `with_init` runs the PRAGMAs every
         // time r2d2 hands out a fresh connection.
         let manager = SqliteConnectionManager::file(path)
-            .with_flags(OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI)
+            .with_flags(
+                OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                    | OpenFlags::SQLITE_OPEN_URI,
+            )
             .with_init(|c| {
                 // Read-only conns can't change journal_mode; just set the
                 // flags that affect reader behaviour.
@@ -256,9 +260,8 @@ mod tests {
 
         let hits: Vec<String> = handle
             .read(|c| {
-                let mut stmt = c.prepare(
-                    "SELECT id FROM component_fts WHERE component_fts MATCH ?1",
-                )?;
+                let mut stmt =
+                    c.prepare("SELECT id FROM component_fts WHERE component_fts MATCH ?1")?;
                 let rows = stmt
                     .query_map(["foo"], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -283,8 +286,8 @@ mod tests {
             let h = Arc::clone(&handle);
             threads.push(thread::spawn(move || {
                 h.read(|c| {
-                    let n: i64 = c
-                        .query_row("SELECT COUNT(*) FROM component", [], |row| row.get(0))?;
+                    let n: i64 =
+                        c.query_row("SELECT COUNT(*) FROM component", [], |row| row.get(0))?;
                     Ok(n)
                 })
                 .unwrap()
@@ -326,9 +329,7 @@ mod tests {
         t2.join().unwrap();
 
         let total: i64 = handle
-            .read(|c| {
-                Ok(c.query_row("SELECT COUNT(*) FROM tag", [], |row| row.get(0))?)
-            })
+            .read(|c| Ok(c.query_row("SELECT COUNT(*) FROM tag", [], |row| row.get(0))?))
             .unwrap();
         assert_eq!(total, 2);
     }
@@ -341,9 +342,7 @@ mod tests {
         let path = dir.path().join("aseye-wal-test.sqlite");
         let handle = IndexHandle::open(&path).expect("open file-backed");
         let mode: String = handle
-            .write(|c| {
-                Ok(c.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?)
-            })
+            .write(|c| Ok(c.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?))
             .unwrap();
         assert_eq!(mode.to_lowercase(), "wal");
     }

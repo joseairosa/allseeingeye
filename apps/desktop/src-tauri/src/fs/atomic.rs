@@ -173,11 +173,7 @@ fn parent_dir(path: &Path) -> Option<PathBuf> {
 /// Loop on `write` until all bytes are consumed. `write_all` already does
 /// this internally on std but we wrap it to attribute any failure to the
 /// `Write` variant with the full path for diagnostics.
-fn write_all_loop(
-    file: &mut fs::File,
-    content: &[u8],
-    temp_path: &Path,
-) -> Result<(), FsError> {
+fn write_all_loop(file: &mut fs::File, content: &[u8], temp_path: &Path) -> Result<(), FsError> {
     file.write_all(content).map_err(|source| FsError::Write {
         path: temp_path.to_path_buf(),
         source,
@@ -278,9 +274,7 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
-            !entries
-                .iter()
-                .any(|name| name.contains(".aseye-tmp-")),
+            !entries.iter().any(|name| name.contains(".aseye-tmp-")),
             "temp files leaked: {entries:?}"
         );
     }

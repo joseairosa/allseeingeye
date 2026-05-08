@@ -5,9 +5,7 @@
 //! a code change, not a runtime config (per `docs/05-data-architecture.md`
 //! "Tool registry").
 
-use super::types::{
-    ComponentRoot, ComponentType, Format, Scope, ToolDescriptor, ToolId,
-};
+use super::types::{ComponentRoot, ComponentType, Format, Scope, ToolDescriptor, ToolId};
 
 /// Build the descriptor for Claude Code (docs/04 Section 4.1).
 #[must_use]
@@ -16,10 +14,7 @@ pub fn claude_code() -> ToolDescriptor {
         id: ToolId::ClaudeCode,
         display_name: "Claude Code".to_owned(),
         binary_names: vec!["claude".to_owned(), "claude-code".to_owned()],
-        detection_paths: vec![
-            "~/.claude".to_owned(),
-            "~/.claude.json".to_owned(),
-        ],
+        detection_paths: vec!["~/.claude".to_owned(), "~/.claude.json".to_owned()],
         version_command: Some("claude --version".to_owned()),
         component_roots: vec![
             // 2 - Settings (user level + local override).
@@ -114,9 +109,7 @@ pub fn claude_code() -> ToolDescriptor {
             // 10 - Plugins.
             ComponentRoot {
                 component_type: ComponentType::Plugin,
-                path_pattern:
-                    "~/.claude/plugins/cache/*/*/*/.claude-plugin/plugin.json"
-                        .to_owned(),
+                path_pattern: "~/.claude/plugins/cache/*/*/*/.claude-plugin/plugin.json".to_owned(),
                 format: Format::Json,
                 flavour: None,
                 scope: Scope::Plugin,
@@ -124,10 +117,7 @@ pub fn claude_code() -> ToolDescriptor {
                 key_path: None,
             },
         ],
-        watch_paths: vec![
-            "~/.claude".to_owned(),
-            "~/.claude.json".to_owned(),
-        ],
+        watch_paths: vec!["~/.claude".to_owned(), "~/.claude.json".to_owned()],
     }
 }
 
@@ -260,10 +250,7 @@ pub fn antigravity() -> ToolDescriptor {
         display_name: "Antigravity".to_owned(),
         // No widely-shipped CLI yet; detection is path-based.
         binary_names: vec![],
-        detection_paths: vec![
-            "~/.gemini".to_owned(),
-            "~/.gemini/antigravity".to_owned(),
-        ],
+        detection_paths: vec!["~/.gemini".to_owned(), "~/.gemini/antigravity".to_owned()],
         version_command: None,
         component_roots: vec![
             // 3 - Memory (shared with Gemini CLI; see gotcha in docs/04).
@@ -279,8 +266,7 @@ pub fn antigravity() -> ToolDescriptor {
             // 5 - Skills (folder identity, global Antigravity location).
             ComponentRoot {
                 component_type: ComponentType::Skill,
-                path_pattern:
-                    "~/.gemini/antigravity/skills/*/SKILL.md".to_owned(),
+                path_pattern: "~/.gemini/antigravity/skills/*/SKILL.md".to_owned(),
                 format: Format::MarkdownFrontmatter,
                 flavour: None,
                 scope: Scope::User,
@@ -290,8 +276,7 @@ pub fn antigravity() -> ToolDescriptor {
             // 8 - MCP (sibling JSON file).
             ComponentRoot {
                 component_type: ComponentType::Mcp,
-                path_pattern:
-                    "~/.gemini/antigravity/mcp_config.json".to_owned(),
+                path_pattern: "~/.gemini/antigravity/mcp_config.json".to_owned(),
                 format: Format::Json,
                 flavour: None,
                 scope: Scope::User,

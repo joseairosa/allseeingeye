@@ -5,13 +5,13 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-mod registry;
-mod watcher;
-mod parser;
+mod fs;
 mod index;
 mod ipc;
 mod mcp;
-mod fs;
+mod parser;
+mod registry;
+mod watcher;
 
 // Phase 1.2: re-export the index public surface at the crate root so
 // future Tauri state setup (Phase 1.6) can write

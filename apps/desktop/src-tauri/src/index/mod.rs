@@ -46,8 +46,14 @@ mod tests {
     fn default_db_path_under_data_dir() {
         let p = default_db_path();
         // Path always ends in our app dir + filename, regardless of host.
-        let last_two: Vec<&std::ffi::OsStr> =
-            p.iter().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+        let last_two: Vec<&std::ffi::OsStr> = p
+            .iter()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         assert_eq!(last_two[0], std::ffi::OsStr::new("AllSeeingEye"));
         assert_eq!(last_two[1], std::ffi::OsStr::new("index.sqlite"));
     }

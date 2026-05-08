@@ -27,13 +27,8 @@ pub fn detect_all() -> Vec<DetectedTool> {
 /// Detect a single tool. `home_override` is for tests; production callers
 /// should pass `None` to use the real `$HOME`.
 #[must_use]
-pub fn detect_one(
-    descriptor: &ToolDescriptor,
-    home_override: Option<&Path>,
-) -> DetectedTool {
-    let home: Option<PathBuf> = home_override
-        .map(Path::to_path_buf)
-        .or_else(dirs::home_dir);
+pub fn detect_one(descriptor: &ToolDescriptor, home_override: Option<&Path>) -> DetectedTool {
+    let home: Option<PathBuf> = home_override.map(Path::to_path_buf).or_else(dirs::home_dir);
 
     let existing_root_paths = collect_existing_paths(
         descriptor.detection_paths.iter().map(String::as_str),
@@ -79,10 +74,7 @@ pub fn expand_home(path: &str, home: Option<&Path>) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn collect_existing_paths<'a, I>(
-    candidates: I,
-    home: Option<&Path>,
-) -> Vec<String>
+fn collect_existing_paths<'a, I>(candidates: I, home: Option<&Path>) -> Vec<String>
 where
     I: IntoIterator<Item = &'a str>,
 {
@@ -126,9 +118,12 @@ fn run_version_command(cmd_line: &str) -> Option<String> {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => {
                 let output = child.wait_with_output().ok()?;
-                let stdout =
-                    String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                return if stdout.is_empty() { None } else { Some(stdout) };
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                return if stdout.is_empty() {
+                    None
+                } else {
+                    Some(stdout)
+                };
             }
             // Either the process exited non-zero, or `try_wait` failed
             // outright. In both cases there's nothing to report.

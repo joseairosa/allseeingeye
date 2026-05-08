@@ -127,11 +127,7 @@ fn assert_safe_target_inner(path: &Path, allow_outside_home: bool) -> Result<(),
 ///
 /// # Errors
 /// Any error from the underlying checks or `atomic_write`.
-pub fn safe_atomic_write(
-    path: &Path,
-    content: &[u8],
-    roots: &[&Path],
-) -> Result<(), FsError> {
+pub fn safe_atomic_write(path: &Path, content: &[u8], roots: &[&Path]) -> Result<(), FsError> {
     safe_atomic_write_with_options(path, content, roots, /* allow_outside_home: */ false)
 }
 
@@ -236,8 +232,7 @@ mod tests {
         let outside = dir_b.path().join("outside.txt");
         stdfs::write(&outside, b"x").expect("seed outside");
 
-        let err =
-            assert_within_root(&outside, dir_a.path()).expect_err("escape must be rejected");
+        let err = assert_within_root(&outside, dir_a.path()).expect_err("escape must be rejected");
         match err {
             FsError::EscapeDetected { .. } => {}
             other => panic!("expected EscapeDetected, got {other:?}"),
@@ -272,8 +267,8 @@ mod tests {
         let link = root_a.path().join("escape");
         symlink(&real_target, &link).expect("symlink");
 
-        let err = assert_within_root(&link, root_a.path())
-            .expect_err("symlink escape must be rejected");
+        let err =
+            assert_within_root(&link, root_a.path()).expect_err("symlink escape must be rejected");
         match err {
             FsError::EscapeDetected { .. } => {}
             other => panic!("expected EscapeDetected, got {other:?}"),
@@ -286,7 +281,11 @@ mod tests {
         // first. We also use allow_outside_home=true via the override
         // helper to keep the test robust on CI hosts where HOME is exotic.
         let dir = tempdir().expect("dir");
-        let bad = dir.path().join("project").join("node_modules").join("foo.json");
+        let bad = dir
+            .path()
+            .join("project")
+            .join("node_modules")
+            .join("foo.json");
         // Create the parent so canonicalisation succeeds.
         stdfs::create_dir_all(bad.parent().unwrap()).expect("mkdirs");
         let err = assert_safe_target_with_override(&bad, true)
@@ -302,8 +301,7 @@ mod tests {
         let dir = tempdir().expect("dir");
         let bad = dir.path().join(".git").join("config");
         stdfs::create_dir_all(bad.parent().unwrap()).expect("mkdirs");
-        let err = assert_safe_target_with_override(&bad, true)
-            .expect_err(".git must be rejected");
+        let err = assert_safe_target_with_override(&bad, true).expect_err(".git must be rejected");
         match err {
             FsError::ForbiddenSegment { segment, .. } => assert_eq!(segment, ".git"),
             other => panic!("expected ForbiddenSegment, got {other:?}"),
