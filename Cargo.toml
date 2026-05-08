@@ -31,3 +31,28 @@ panic = "abort"
 [profile.dev]
 opt-level = 0
 debug = true
+
+# Phase 5.2 - bench profile.
+# Cargo's `[profile.bench]` inherits from `[profile.release]` by
+# default, which would otherwise pin `panic = "abort"` (set on
+# release for the shipped binary). The bench harness requires
+# unwinding to catch and report individual benchmark panics; without
+# the explicit `panic = "unwind"` we get
+# "the crate `<X>` requires panic strategy `abort` which is
+#  incompatible with this crate's strategy of `unwind`"
+# across every transitive panic-strategy-bound dep (signal_hook,
+# tauri_plugin_*, encoding_rs, ...). Cargo emits a warning that
+# the field is "ignored" for bench profiles, but in practice
+# removing it reintroduces the linker errors above - the warning
+# is stale (cargo issue #5371). Keep the field.
+# We hold `opt-level = 3` so the bench numbers reflect optimised
+# code paths (matching the shipped binary), but disable full LTO -
+# full LTO inflates bench compile time without changing the
+# measured per-iteration cost meaningfully on micro-benchmarks.
+[profile.bench]
+opt-level = 3
+debug = false
+lto = false
+codegen-units = 1
+strip = false
+panic = "unwind"

@@ -1,0 +1,13 @@
+{
+  "$schema": "./perf-budgets.schema.md",
+  "frontend": {
+    "totalGzipBytes": 250000,
+    "largestChunkGzipBytes": 200000,
+    "tolerancePercent": 10
+  },
+  "rust": {
+    "parserMeanMicros": 15,
+    "classifyMeanMicros": 1000,
+    "tolerancePercent": 20
+  }
+}

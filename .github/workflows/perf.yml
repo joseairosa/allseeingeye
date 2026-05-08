@@ -1,0 +1,348 @@
+name: Performance budgets
+
+# Phase 5.2 - codify the CI-checkable performance gates.
+#
+# What this workflow checks:
+#   1. Frontend bundle size (gzipped JS sum + largest single chunk)
+#      against `perf-budgets.json -> frontend`.
+#   2. Rust micro-benchmark mean times (parser dispatch + path
+#      classification) against `perf-budgets.json -> rust`.
+#
+# What this workflow does NOT check (post-MVP, see docs/perf-budgets.md):
+#   - Cold start time (needs a real WebView; PRD H1).
+#   - Idle CPU + runtime memory (needs a long-running app; PRD H2).
+#   - Final signed binary size (lives in release.yml; PRD H3).
+#
+# Failure semantics:
+#   - Bundle over budget (with tolerance applied): bundle-size job
+#     fails. The PR comment shows the diff and the budget update
+#     procedure (docs/perf-budgets.md).
+#   - Rust mean exceeds budget: rust-bench job fails with the offending
+#     mean and the percentage delta vs. budget.
+#   - Cron run on main: same gates; a regression on main creates a
+#     red badge that is the first signal we silently merged a perf
+#     issue.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # Weekly background sweep so a passive perf regression (e.g. a
+    # transitive dep bump that adds bundle weight) is caught even when
+    # no one is actively merging. Mondays 06:00 UTC matches the cadence
+    # the security workflow already uses on Mondays 04:00 UTC.
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # `pull-requests: write` is required for the bundle-size job to post
+  # the size-diff comment via `actions/github-script`. Read-only is
+  # insufficient.
+  pull-requests: write
+
+jobs:
+  bundle-size:
+    name: Frontend bundle size
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile --reporter=ndjson
+
+      - name: Rebuild esbuild (allow native binary fetch)
+        # Mirrors `ci.yml` - pnpm 10 quarantines `postinstall` scripts
+        # by default, so esbuild's native binary needs an explicit
+        # rebuild before Vite picks it up. Without this Vite falls
+        # back to the slow JS path and the size numbers are not
+        # representative of what we ship.
+        run: pnpm rebuild esbuild
+        shell: bash
+
+      - name: Frontend build
+        run: pnpm --filter @aseye/desktop build
+
+      - name: Compute bundle sizes + enforce budgets
+        id: sizes
+        # `node scripts/perf-summary.mjs` prints a Markdown table to
+        # stdout AND to $GITHUB_STEP_SUMMARY, exits 1 when a budget
+        # is exceeded. The script also writes outputs we consume in
+        # the comment step below.
+        run: node scripts/perf-summary.mjs
+
+      - name: Comment on PR with size diff
+        # Only run on PRs (cron + push to main are gated out). We
+        # post a single sticky comment per PR so the latest run is
+        # always visible without scroll-fatigue.
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        env:
+          TOTAL: ${{ steps.sizes.outputs.total_gzip_bytes }}
+          LARGEST: ${{ steps.sizes.outputs.largest_gzip_bytes }}
+          LARGEST_NAME: ${{ steps.sizes.outputs.largest_chunk_name }}
+          OVER_BUDGET: ${{ steps.sizes.outputs.over_budget }}
+        with:
+          script: |
+            const total = Number(process.env.TOTAL || '0');
+            const largest = Number(process.env.LARGEST || '0');
+            const largestName = process.env.LARGEST_NAME || '(unknown)';
+            const over = process.env.OVER_BUDGET === 'true';
+            const fmt = (n) => {
+              if (n < 1024) return `${n} B`;
+              if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+              return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+            };
+            // Sticky-comment marker so subsequent runs upsert in place.
+            const marker = '<!-- aseye:perf-budgets:bundle-size -->';
+            const body = [
+              marker,
+              '## Bundle size report',
+              '',
+              over ? ':red_circle: **Budget exceeded.** See workflow logs and `docs/perf-budgets.md`.' : ':green_circle: Within budget.',
+              '',
+              `- Total gzipped JS: **${fmt(total)}**`,
+              `- Largest chunk (\`${largestName}\`): **${fmt(largest)}** gz`,
+              '',
+              'Source of truth: `perf-budgets.json`. Run locally: `pnpm perf:summary`.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }
+
+  rust-bench:
+    name: Rust criterion benches
+    runs-on: ubuntu-latest
+    # Criterion's default measurement time is 5s per bench function;
+    # 4 parser fns + 2 classify fns = 6 fns ~= 30s. Add warmup +
+    # compile + dep build and 30 minutes is generous on cold cache.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 1.95.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          # Distinct key from `ci.yml` so PR builds don't poison perf
+          # cache. The benches need release-profile artifacts that
+          # the standard CI run does not produce.
+          shared-key: perf-ubuntu-latest
+
+      - name: Install Linux Tauri build deps
+        # The lib crate transitively pulls in webkit/gtk via
+        # tauri-plugin-* even at bench time; without these the link
+        # step fails with `cannot find -lwebkit2gtk-4.1`.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Run criterion benches
+        id: bench
+        working-directory: apps/desktop/src-tauri
+        # `--bench parser_bench --bench classify_bench` is explicit so
+        # we don't accidentally pick up future benches without a budget.
+        # Tee output to a file so the next step can parse it. `set
+        # -o pipefail` ensures a bench compile error fails the step
+        # instead of being masked by `tee`'s exit 0.
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/bench-out"
+          cargo bench --bench parser_bench --bench classify_bench \
+            -- --noplot \
+            2>&1 | tee "${RUNNER_TEMP}/bench-out/criterion.txt"
+
+      - name: Enforce Rust perf budgets
+        env:
+          BENCH_LOG: ${{ runner.temp }}/bench-out/criterion.txt
+        # Parses the criterion `time:` lines and compares the mean
+        # against `perf-budgets.json -> rust`. We deliberately keep
+        # the parsing in the workflow (not a separate Node script)
+        # because the format is stable and the only consumer is this
+        # job; coupling it tighter to the bench output keeps the
+        # surface small.
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const budgets = JSON.parse(fs.readFileSync(path.resolve('perf-budgets.json'), 'utf8'));
+          const rust = budgets.rust;
+          const log = fs.readFileSync(process.env.BENCH_LOG, 'utf8');
+
+          // Criterion emits lines like:
+          //   parser/json             time:   [ 8.5183 us  8.5301 us  8.5430 us]
+          // For long bench ids the id wraps to its own line and `time:`
+          // appears below it indented:
+          //   parser/markdown_frontmatter
+          //                           time:   [7.1242 µs 7.3349 µs 7.6107 µs]
+          // We tolerate both shapes: optional whitespace + newline
+          // between the id and `time:`. The id charset includes `/`
+          // (group separator) and `_` (multi-word fixture names).
+          // We extract the bench id and the middle time (the mean),
+          // converting to microseconds. Time can be ns / us / µs /
+          // ms / s.
+          const TIME_RE = /^([a-zA-Z0-9_\/]+)\s+time:\s+\[\s*\S+\s+\S+\s+(\S+)\s+(\S+)\s+\S+\s+\S+\s*\]/gm;
+          // Criterion emits the SI micro symbol (`µs` - either U+00B5
+          // MICRO SIGN or U+03BC GREEK SMALL LETTER MU depending on
+          // build) by default. We accept the ASCII fallback `us` too,
+          // and treat anything starting with `u` or `µ`/mu followed by
+          // `s` as microseconds.
+          const toMicros = (val, unit) => {
+            const v = parseFloat(val);
+            if (unit === 'ns') return v / 1000;
+            if (unit === 'ms') return v * 1000;
+            if (unit === 's')  return v * 1_000_000;
+            // Match `us`, `µs` (U+00B5), `μs` (U+03BC).
+            if (/^(?:u|µ|μ)s$/.test(unit)) return v;
+            throw new Error(`unknown time unit ${unit} for ${val}`);
+          };
+
+          const measurements = {};
+          let m;
+          // Reset regex global state.
+          TIME_RE.lastIndex = 0;
+          while ((m = TIME_RE.exec(log)) !== null) {
+            const [, id, val, unit] = m;
+            measurements[id] = toMicros(val, unit);
+          }
+          if (Object.keys(measurements).length === 0) {
+            console.error('No criterion measurements parsed from bench output. ' +
+              'Did the bench format change?');
+            process.exit(2);
+          }
+
+          const tolerance = 1 + (rust.tolerancePercent / 100);
+          const failures = [];
+          // Take the *worst* (max) mean per group as the regression
+          // proxy. This way a regression in any one fixture (e.g.
+          // YAML) fails the gate even if the others are fine.
+          const groupMax = (prefix) => {
+            const ids = Object.keys(measurements).filter((k) => k.startsWith(prefix + '/'));
+            if (ids.length === 0) return null;
+            let worst = null;
+            for (const id of ids) {
+              if (worst === null || measurements[id] > measurements[worst]) {
+                worst = id;
+              }
+            }
+            return { id: worst, micros: measurements[worst] };
+          };
+
+          const parser = groupMax('parser');
+          const classify = groupMax('classify');
+          if (!parser) { console.error('Missing parser/* benchmarks.'); process.exit(2); }
+          if (!classify) { console.error('Missing classify/* benchmarks.'); process.exit(2); }
+
+          const lines = [];
+          lines.push(`# Rust bench report`);
+          lines.push('');
+          const check = (label, micros, budget, id) => {
+            const ceiling = budget * tolerance;
+            const pass = micros <= ceiling;
+            const status = pass ? 'PASS' : 'FAIL';
+            lines.push(`- **${label}** (worst: \`${id}\`): ${micros.toFixed(2)} us  ` +
+              `budget ${budget} us (tolerated ${ceiling.toFixed(2)} us) - ${status}`);
+            if (!pass) {
+              failures.push(`${label} = ${micros.toFixed(2)} us > tolerated ${ceiling.toFixed(2)} us`);
+            }
+          };
+          check('Parser dispatch', parser.micros, rust.parserMeanMicros, parser.id);
+          check('Path classification', classify.micros, rust.classifyMeanMicros, classify.id);
+          lines.push('');
+          lines.push(`Tolerance: ${rust.tolerancePercent}%. Source: \`perf-budgets.json\`. ` +
+            `Update procedure: \`docs/perf-budgets.md\`.`);
+          const summary = lines.join('\n');
+          console.log(summary);
+
+          // Publish to the Actions run summary panel.
+          const stepSummary = process.env.GITHUB_STEP_SUMMARY;
+          if (stepSummary) { fs.appendFileSync(stepSummary, `${summary}\n`); }
+
+          if (failures.length > 0) {
+            console.error('Rust perf budget(s) exceeded:\n  - ' + failures.join('\n  - '));
+            process.exit(1);
+          }
+          NODE
+
+      - name: Comment on PR with rust bench summary
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        env:
+          BENCH_LOG: ${{ runner.temp }}/bench-out/criterion.txt
+        with:
+          script: |
+            const fs = require('node:fs');
+            const log = fs.readFileSync(process.env.BENCH_LOG, 'utf8');
+            // Extract `time:` lines as a compact summary; keep raw
+            // criterion output out of the comment to avoid noise.
+            const lines = log.split('\n').filter(l => /\btime:\s/.test(l)).slice(0, 12);
+            const marker = '<!-- aseye:perf-budgets:rust-bench -->';
+            const body = [
+              marker,
+              '## Rust bench report',
+              '',
+              '```',
+              ...lines,
+              '```',
+              '',
+              'Source of truth: `perf-budgets.json -> rust`. Update procedure: `docs/perf-budgets.md`.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }

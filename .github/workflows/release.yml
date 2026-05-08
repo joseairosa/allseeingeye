@@ -546,6 +546,26 @@ jobs:
           echo "Aggregated SHA256SUMS:"
           cat "${OUT}"
 
+      - name: Sanity check perf-budgets.json (warn-only)
+        # Phase 5.2 - the perf workflow on `main` is the formal gate;
+        # this step is a best-effort sanity check at release time so a
+        # missing or malformed `perf-budgets.json` is surfaced *before*
+        # we cut a tag. It is intentionally warn-only: release is the
+        # formal go-live, not the perf gate, and we never want a
+        # transient bench number to block a security or hotfix release.
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ ! -f perf-budgets.json ]; then
+            echo "::warning::perf-budgets.json missing at release time. See docs/perf-budgets.md." >&2
+            exit 0
+          fi
+          if ! python3 -c "import json,sys; json.load(open('perf-budgets.json'))" 2>/dev/null; then
+            echo "::warning::perf-budgets.json failed JSON parse at release time. Investigate before next release." >&2
+            exit 0
+          fi
+          echo "perf-budgets.json present and parseable."
+
       - name: Resolve release notes from tag annotation
         id: notes
         env:

@@ -16,7 +16,8 @@
     "build-storybook": "pnpm --filter @aseye/ui build-storybook",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "perf:summary": "node scripts/perf-summary.mjs"
   },
   "packageManager": "pnpm@10.28.2"
 }
