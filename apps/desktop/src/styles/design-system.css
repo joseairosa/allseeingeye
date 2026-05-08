@@ -669,6 +669,35 @@ kbd {
   opacity: 0.56;
 }
 
+/* Skeleton row used while the first IPC round-trip is in flight. The
+   shimmer is a subtle opacity pulse using only existing tokens; honours
+   `prefers-reduced-motion` via `body.reduced-motion`. */
+.component-row.skeleton {
+  cursor: default;
+  pointer-events: none;
+}
+
+.skeleton-block {
+  display: block;
+  width: 70%;
+  height: 12px;
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  opacity: 0.6;
+  animation: skeleton-pulse 1400ms ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.75; }
+}
+
+body.reduced-motion .skeleton-block { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block { animation: none; }
+}
+
 .type-cell,
 .name-cell {
   display: flex;

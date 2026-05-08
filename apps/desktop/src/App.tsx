@@ -13,7 +13,7 @@ import { MapView } from "@/views/MapView";
 import { EditorView } from "@/views/EditorView";
 import { HealthView } from "@/views/HealthView";
 import { SettingsView } from "@/views/SettingsView";
-import { inventoryRows } from "@/lib/fixtures";
+import { useHealthSummary, usePipelineEventInvalidator } from "@/ipc/hooks";
 
 /**
  * Resolve the effective theme, honouring the user's `system` selection.
@@ -70,8 +70,11 @@ export function App() {
   useReducedMotionOverride();
   usePanicBodyClass();
   useGlobalKeyboard();
+  usePipelineEventInvalidator();
 
   const panicMode = useUi((s) => s.panicMode);
+  const health = useHealthSummary();
+  const totalComponents = health.data?.totalComponents ?? 0;
 
   return (
     <div className="app-shell" data-density="comfortable">
@@ -94,7 +97,7 @@ export function App() {
         <EditorView />
         <HealthView />
         <SettingsView />
-        <Statusbar resultCount={inventoryRows.length} />
+        <Statusbar resultCount={totalComponents} />
       </main>
       <QuickLook />
       <CommandPalette />
