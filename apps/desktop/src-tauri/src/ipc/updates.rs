@@ -300,6 +300,27 @@ fn endpoint_for_channel(endpoints: &[Url], channel: UpdateChannel) -> Option<Url
 /// private, so we go straight to `app.config().plugins` (the parsed
 /// `tauri.conf.json -> plugins` `HashMap`) to read them. This is also
 /// stable across plugin major versions.
+/// Sentinel that ships in `tauri.conf.json` until the maintainer runs
+/// `pnpm tauri signer generate` and pastes the real public key. We use
+/// this to short-circuit the daily check so dev builds don't spam
+/// `WARN update-check failed` while no releases exist yet.
+const PUBKEY_PLACEHOLDER: &str = "REPLACE_WITH_TAURI_SIGNING_PUBLIC_KEY";
+
+/// `true` when the `tauri.conf.json` updater pubkey is still the
+/// placeholder. Callers use this to skip the check entirely - hitting
+/// the endpoint without a verifying key would fail at signature time
+/// anyway, and the noisy log isn't useful pre-release.
+fn updater_is_unconfigured<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let config = app.config();
+    let Some(updater_cfg) = config.plugins.0.get("updater") else {
+        return true;
+    };
+    updater_cfg
+        .get("pubkey")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|s| s.trim().is_empty() || s == PUBKEY_PLACEHOLDER)
+}
+
 fn pick_endpoint<R: Runtime>(
     app: &AppHandle<R>,
     channel: UpdateChannel,
@@ -332,6 +353,11 @@ pub async fn check_for_update<R: Runtime>(
     app: AppHandle<R>,
     settings: State<'_, UpdateSettings>,
 ) -> Result<Option<UpdateAvailable>, UpdateError> {
+    if updater_is_unconfigured(&app) {
+        // Pre-release builds: surface a clear typed error instead of
+        // a noisy plugin failure deep in the manifest fetch.
+        return Err(UpdateError::MissingEndpoint);
+    }
     let channel = settings.channel();
     check_for_update_inner(&app, channel).await
 }
@@ -438,6 +464,17 @@ pub fn spawn_daily_check<R: Runtime>(app: AppHandle<R>) {
         // Resource-considerate: let the filesystem scan finish before
         // we start hitting the network.
         tokio::time::sleep(STARTUP_GRACE).await;
+
+        // If the maintainer hasn't generated a Tauri signing keypair
+        // yet (placeholder pubkey in tauri.conf.json), skip the check
+        // entirely. Without a verifying key any update would fail at
+        // signature time, and the WARN log is just noise pre-release.
+        if updater_is_unconfigured(&app) {
+            tracing::info!(
+                "update-check: skipped (no pubkey configured; run `pnpm tauri signer generate`)"
+            );
+            return;
+        }
 
         loop {
             // Snapshot the toggle each tick so a user disable takes
