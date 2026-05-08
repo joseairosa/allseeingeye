@@ -1,0 +1,247 @@
+---
+# All Seeing Eye - Release dry-run
+#
+# Mirrors `release.yml` end-to-end but stubs out every signing operation
+# with a placeholder so the matrix can be exercised without burning
+# Apple notarisation quota, Windows EV cert, or GPG key material.
+#
+# Triggered manually only (`workflow_dispatch`). Useful for:
+# - validating runner image changes (Xcode / Visual Studio updates),
+# - smoke-testing tauri-action major-version bumps,
+# - rehearsing the publish job's manifest format without producing an
+#   actual signed bundle.
+#
+# Outputs are ALWAYS dummy. The GitHub Release step is replaced with a
+# simple artifact upload so the dry run never accidentally promotes a
+# build to users. See `.github/workflows/release.yml` for the production
+# pipeline + the full secret matrix.
+# -----------------------------------------------------------------------------
+
+name: Release (dry run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Synthetic tag to simulate (e.g. v0.0.0-beta.1)"
+        required: true
+        default: "v0.0.0-beta.0"
+        type: string
+
+concurrency:
+  group: release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  PNPM_VERSION: "10.28.2"
+  NODE_VERSION: "22"
+  RUST_TOOLCHAIN: "1.95.0"
+
+jobs:
+  setup:
+    name: Resolve channel + version (dry run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.derive.outputs.tag }}
+      version: ${{ steps.derive.outputs.version }}
+      channel: ${{ steps.derive.outputs.channel }}
+      is_prerelease: ${{ steps.derive.outputs.is_prerelease }}
+      manifest_name: ${{ steps.derive.outputs.manifest_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive tag, version, channel
+        id: derive
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG}"
+          VERSION="${TAG#v}"
+          if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            CHANNEL="beta"
+            IS_PRERELEASE="true"
+          elif [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            CHANNEL="stable"
+            IS_PRERELEASE="false"
+          else
+            echo "::error::Tag '${TAG}' does not match v<semver> or v<semver>-beta.N" >&2
+            exit 1
+          fi
+          MANIFEST_NAME="latest-${CHANNEL}.json"
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            echo "channel=${CHANNEL}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+            echo "manifest_name=${MANIFEST_NAME}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: build dry-run (${{ matrix.os }})
+    needs: setup
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Setup Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          shared-key: release-dry-run-${{ matrix.os }}-${{ matrix.target }}
+
+      - name: Install Linux Tauri build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile --reporter=ndjson
+
+      - name: Rebuild esbuild (allow native binary fetch)
+        shell: bash
+        run: pnpm rebuild esbuild
+
+      - name: Stub Apple cert import
+        if: runner.os == 'macOS'
+        run: echo "[dry-run] Skipped Apple cert import"
+
+      - name: Stub Windows cert import
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Write-Output "[dry-run] Skipped Windows cert import"
+
+      - name: Stub GPG key import
+        if: runner.os == 'Linux'
+        run: echo "[dry-run] Skipped GPG key import"
+
+      # Build without signing flags. We pass `--ci` to skip interactive
+      # prompts. tauri-action runs the unsigned bundle path when the
+      # signing env vars are absent.
+      - name: Build Tauri bundle (unsigned)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ needs.setup.outputs.tag }}
+          releaseId: ""
+          args: --target ${{ matrix.target }} --verbose
+          includeUpdaterJson: false
+
+      - name: Emit dummy signature files
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          shopt -s nullglob globstar
+          for f in "${BUNDLE_DIR}"/**/*.{app.tar.gz,AppImage,msi,deb}; do
+            if [ -f "${f}" ]; then
+              echo "DRY_RUN_SIGNATURE_PLACEHOLDER" > "${f}.sig"
+              echo "Stubbed signature for ${f}"
+            fi
+          done
+
+      - name: Upload OS artifacts (dry run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-bundle-${{ matrix.os }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Aggregate dry-run manifest
+    needs:
+      - setup
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dry-run-bundle-*
+          merge-multiple: true
+
+      - name: Generate dummy updater manifest
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          MANIFEST_NAME: ${{ needs.setup.outputs.manifest_name }}
+        run: |
+          set -euo pipefail
+          MANIFEST="${GITHUB_WORKSPACE}/${MANIFEST_NAME}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg notes "DRY RUN - not for distribution" \
+            --arg pub_date "${PUB_DATE}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: "DRY_RUN", url: "https://example.invalid/darwin-aarch64.app.tar.gz" },
+                "darwin-x86_64":  { signature: "DRY_RUN", url: "https://example.invalid/darwin-x86_64.app.tar.gz" },
+                "linux-x86_64":   { signature: "DRY_RUN", url: "https://example.invalid/linux-x86_64.AppImage" },
+                "windows-x86_64": { signature: "DRY_RUN", url: "https://example.invalid/windows-x86_64.msi" }
+              }
+            }' > "${MANIFEST}"
+          cat "${MANIFEST}"
+
+      - name: Upload dry-run manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-manifest
+          path: ${{ needs.setup.outputs.manifest_name }}
+          if-no-files-found: error
+          retention-days: 3

@@ -1,0 +1,13 @@
+# All Seeing Eye - CODEOWNERS
+#
+# Two-person review rule for the release pipeline. SR-4 in
+# `docs/11-risks.md` ("Auto-update supply chain") names this gate
+# explicitly: any change to the release workflow requires CODEOWNERS
+# approval before merge.
+
+# Release pipeline + signing matrix.
+.github/workflows/release.yml         @joseairosa
+.github/workflows/release-dry-run.yml @joseairosa
+
+# CODEOWNERS itself - any change to ownership rules needs owner sign-off.
+.github/CODEOWNERS                    @joseairosa

@@ -1,24 +1,669 @@
-name: Release
+---
+# All Seeing Eye - Tag-driven release workflow
+#
+# Triggered by pushing a tag matching `v*` (stable channel) or `v*-beta.*`
+# (beta channel). Builds a signed bundle on each supported OS, then
+# aggregates artifacts into a GitHub Release with a signed Tauri Updater
+# manifest (`latest.json`) per channel.
+#
+# Phase mapping (see `docs/10-roadmap.md`):
+#   - 5.3 - macOS sign + notarise + Linux GPG sign
+#   - 6.3 - Windows sign + Tauri Updater manifest + GitHub Release publish
+#
+# Two-person review rule lives in `.github/CODEOWNERS` per `docs/11-risks.md`
+# SR-4 ("auto-update supply chain"). Any change to this file requires
+# `@joseairosa` approval before merge.
+#
+# -----------------------------------------------------------------------------
+# Required GitHub Actions secrets
+# -----------------------------------------------------------------------------
+# Tauri Updater (Ed25519, channel-agnostic - same key signs both channels):
+#   TAURI_SIGNING_PRIVATE_KEY           - Ed25519 private key (PEM, single line
+#                                         with `\n` literals or base64). Generated
+#                                         via `pnpm tauri signer generate -w
+#                                         ~/.tauri/aseye.key`. The matching
+#                                         public key goes into `tauri.conf.json`
+#                                         under `plugins.updater.pubkey`.
+#                                         Rotation: ANY rotation forces every
+#                                         existing install to fail signature
+#                                         check on the next update poll.
+#                                         A rotation must ship a new app version
+#                                         AND keep both keys signing in parallel
+#                                         for one full release cycle. Treat this
+#                                         secret as the highest-impact one.
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  - Passphrase chosen during `signer
+#                                         generate`. Required even if empty
+#                                         (Tauri reads it unconditionally).
+#                                         Rotation: free, doesn't touch users.
+#
+# Apple Developer ID + Notarisation (macOS jobs only):
+#   APPLE_CERTIFICATE                   - base64 of the Developer ID Application
+#                                         .p12 export. Generate via Keychain
+#                                         Access > Certificates > Right-click
+#                                         > Export > .p12 > then
+#                                         `base64 -i cert.p12 | pbcopy`.
+#                                         Rotation: free, doesn't touch users.
+#                                         Identity SHA stays bound to the
+#                                         Apple Developer team, not this cert.
+#   APPLE_CERTIFICATE_PASSWORD          - Password chosen on .p12 export.
+#                                         Rotation: free.
+#   APPLE_SIGNING_IDENTITY              - Common name of the signing identity,
+#                                         e.g. "Developer ID Application: Jose
+#                                         Airosa (ABCDE12345)". Used by
+#                                         tauri-action's `signing_identity`.
+#                                         Rotation: only if the cert's CN
+#                                         changes; not user-visible.
+#   APPLE_ID                            - Apple ID email used for notarytool
+#                                         submission.
+#   APPLE_PASSWORD                      - App-specific password generated at
+#                                         appleid.apple.com (NOT the iCloud
+#                                         password). Rotation: free.
+#   APPLE_TEAM_ID                       - 10-character team identifier from
+#                                         developer.apple.com membership page.
+#                                         Rotation: only on team migration.
+#   KEYCHAIN_PASSWORD                   - Random string used to lock the
+#                                         ephemeral keychain we create for
+#                                         this run. Generate with `openssl rand
+#                                         -base64 24`. Rotation: free, but
+#                                         must not be empty.
+#
+# Windows Authenticode (windows-latest job only):
+#   WINDOWS_CERTIFICATE                 - base64 of the EV-equivalent code-
+#                                         signing .pfx. Hardware-token-only EV
+#                                         certs cannot be exported as .pfx;
+#                                         in that case use the AKV approach
+#                                         (commented out below) and supply
+#                                         AZURE_KEY_VAULT_* secrets instead.
+#                                         Rotation: free, but the cert's
+#                                         Authenticode signer name should stay
+#                                         stable for SmartScreen reputation.
+#   WINDOWS_CERTIFICATE_PASSWORD        - .pfx password.
+#                                         Rotation: free.
+#
+# Linux GPG signing (ubuntu-latest job only):
+#   GPG_PRIVATE_KEY                     - ASCII-armored secret key. Generate via
+#                                         `gpg --full-generate-key` (RSA 4096,
+#                                         no expiry on the master, expiring
+#                                         signing subkey), then `gpg
+#                                         --armor --export-secret-keys $KEYID`.
+#                                         Rotation: free, but `.deb.asc`
+#                                         consumers (apt) need the public key
+#                                         redistributed via release notes.
+#   GPG_PASSPHRASE                      - Passphrase set during key generation.
+#                                         Rotation: free.
+#   GPG_KEY_ID                          - Long key id (16 hex chars) used to
+#                                         pin signature output. Rotation: only
+#                                         if the master key changes.
+#
+# Inherited from the platform (no manual setup required):
+#   GITHUB_TOKEN                        - Auto-injected by GitHub. Used by the
+#                                         `publish` job to upload artifacts to
+#                                         the Release. Scope is `contents:
+#                                         write` on this workflow only.
+#
+# -----------------------------------------------------------------------------
+# Failure behaviour
+# -----------------------------------------------------------------------------
+# - Missing secret -> the relevant signing step exits non-zero with a clear
+#   error before any artifact is built; the matrix leg fails fast and the
+#   `publish` job is skipped (no partial release).
+# - Notarisation timeout -> tauri-action retries up to 2 times via the action's
+#   built-in handling; we cap the total OS job at 60 minutes. If notarytool
+#   still fails the leg fails and `publish` is skipped.
+# - One matrix leg fails -> `publish` will not run (it depends on `success()`
+#   of every build leg). Re-running the failed leg is enough; the run as a
+#   whole is idempotent because the Release is upserted, not appended.
+# -----------------------------------------------------------------------------
 
-# Tag-driven release workflow placeholder.
-# Phase 6.3 (#34) extends this with Tauri's signing + notarisation pipeline,
-# matrix builds, draft GitHub Release, and updater feed publishing. For now
-# the job exists so tag pushes don't fall through silently and so the
-# extension target is obvious in PR diffs.
+name: Release
 
 on:
   push:
     tags:
+      # `v1.2.3` -> stable; `v1.2.3-beta.4` -> beta. Both match here; the
+      # `setup` job parses the tag and routes to the correct channel.
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build (e.g. v0.1.0 or v0.1.0-beta.1)"
+        required: true
+        type: string
+
+concurrency:
+  # Same tag re-pushed cancels in-progress run; different tags run in parallel.
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write    # create / update Release, upload artifacts
+  id-token: write    # OIDC for any future cloud-side cert pulls (AKV, AWS KMS)
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  PNPM_VERSION: "10.28.2"
+  NODE_VERSION: "22"
+  RUST_TOOLCHAIN: "1.95.0"
 
 jobs:
-  placeholder:
-    name: Release placeholder
+  # ---------------------------------------------------------------------------
+  # setup - parse tag, derive channel + version, surface as job outputs.
+  # ---------------------------------------------------------------------------
+  setup:
+    name: Resolve channel + version
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.derive.outputs.tag }}
+      version: ${{ steps.derive.outputs.version }}
+      channel: ${{ steps.derive.outputs.channel }}
+      is_prerelease: ${{ steps.derive.outputs.is_prerelease }}
+      manifest_name: ${{ steps.derive.outputs.manifest_name }}
     steps:
-      - name: Announce
-        run: echo "Release workflow placeholder for Phase 6.3 - tag ${GITHUB_REF_NAME}"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive tag, version, channel
+        id: derive
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # `workflow_dispatch` provides the tag explicitly; tag pushes use
+          # `github.ref_name` which equals the tag short name on tag refs.
+          if [ -n "${INPUT_TAG:-}" ]; then
+            TAG="${INPUT_TAG}"
+          else
+            TAG="${REF_NAME}"
+          fi
+          if [ -z "${TAG}" ]; then
+            echo "::error::Cannot derive tag from event payload" >&2
+            exit 1
+          fi
+          # Strip leading `v` for the bare semver string we surface to
+          # downstream tools.
+          VERSION="${TAG#v}"
+          # Beta channel: `vX.Y.Z-beta.N`. Anything else with a pre-release
+          # qualifier is rejected so we don't accidentally publish an `-rc`
+          # or `-alpha` to the public update feed.
+          if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            CHANNEL="beta"
+            IS_PRERELEASE="true"
+          elif [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            CHANNEL="stable"
+            IS_PRERELEASE="false"
+          else
+            echo "::error::Tag '${TAG}' does not match v<semver> or v<semver>-beta.N" >&2
+            exit 1
+          fi
+          MANIFEST_NAME="latest-${CHANNEL}.json"
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            echo "channel=${CHANNEL}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+            echo "manifest_name=${MANIFEST_NAME}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "Resolved: tag=${TAG} version=${VERSION} channel=${CHANNEL}"
+
+  # ---------------------------------------------------------------------------
+  # build - matrix per OS. Each leg builds, signs, and uploads its bundles
+  # plus the Tauri-emitted `.sig` files for the updater manifest.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.os }})
+    needs: setup
+    runs-on: ${{ matrix.os }}
+    # macOS notarisation is the long pole. 60m gives notarytool retries
+    # plus the actual upload + staple time room without cutting too close.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14            # arm64
+            target: aarch64-apple-darwin
+            artifact_glob: "src-tauri/target/release/bundle/macos/*.app.tar.gz*"
+          - os: macos-15-intel      # x64 (macos-13 retired Dec 2025)
+            target: x86_64-apple-darwin
+            artifact_glob: "src-tauri/target/release/bundle/macos/*.app.tar.gz*"
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_glob: "src-tauri/target/release/bundle/{appimage,deb}/*"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_glob: "src-tauri/target/release/bundle/{msi,nsis}/*"
+
+    env:
+      # Tauri-action reads these from env. Setting empty strings is safe; the
+      # action only invokes signing tooling when the corresponding cert env
+      # is populated. The `if` guards on the secret-import steps below give us
+      # a clearer fail-fast message when secrets are absent.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail fast if updater signing secret is missing
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required to emit a signed updater bundle. See the workflow header for setup." >&2
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Setup Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          # Distinct key from `ci.yml` so PR builds don't poison release
+          # cache (release builds are LTO + strip).
+          shared-key: release-${{ matrix.os }}-${{ matrix.target }}
+
+      - name: Install Linux Tauri build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            gnupg
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile --reporter=ndjson
+
+      - name: Rebuild esbuild (allow native binary fetch)
+        shell: bash
+        run: pnpm rebuild esbuild
+
+      # -----------------------------------------------------------------------
+      # macOS: import Developer ID cert into an ephemeral keychain.
+      # tauri-action picks up the identity by CN.
+      # -----------------------------------------------------------------------
+      - name: Import Apple code-signing cert
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ] || [ -z "${KEYCHAIN_PASSWORD:-}" ]; then
+            echo "::error::APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, and KEYCHAIN_PASSWORD are required for macOS signing." >&2
+            exit 1
+          fi
+          # Ephemeral keychain so the cert never lingers on the runner image.
+          # `security delete-keychain` runs on cleanup but the runner is
+          # destroyed anyway.
+          KEYCHAIN_PATH="${RUNNER_TEMP}/aseye-signing.keychain-db"
+          CERT_PATH="${RUNNER_TEMP}/cert.p12"
+          echo -n "${APPLE_CERTIFICATE}" | base64 --decode -o "${CERT_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERT_PATH}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -A -t cert -f pkcs12 -k "${KEYCHAIN_PATH}"
+          security list-keychain -d user -s "${KEYCHAIN_PATH}"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}" > /dev/null
+          rm -f "${CERT_PATH}"
+          echo "Imported Apple code-signing cert into ephemeral keychain."
+
+      # -----------------------------------------------------------------------
+      # Windows: decode .pfx into a tmp file, expose its path via env so
+      # tauri-action's bundler picks it up. EV cert via Azure Key Vault is
+      # documented but not active in this workflow yet (see Open Questions in
+      # the ticket).
+      # -----------------------------------------------------------------------
+      - name: Import Windows Authenticode cert
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrEmpty($Env:WINDOWS_CERTIFICATE) -or [string]::IsNullOrEmpty($Env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            Write-Error "WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD are required for Windows signing."
+            exit 1
+          }
+          $certPath = Join-Path $Env:RUNNER_TEMP "aseye-codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($Env:WINDOWS_CERTIFICATE))
+          # Tauri reads these env vars during the bundle step.
+          "TAURI_WINDOWS_SIGNING_CERTIFICATE_PATH=$certPath" | Out-File -FilePath $Env:GITHUB_ENV -Append -Encoding utf8
+          "TAURI_WINDOWS_SIGNING_PASSWORD=$Env:WINDOWS_CERTIFICATE_PASSWORD" | Out-File -FilePath $Env:GITHUB_ENV -Append -Encoding utf8
+          Write-Output "Imported Windows code-signing cert."
+
+      # -----------------------------------------------------------------------
+      # Linux: import GPG key. Signing of `.deb` and `.AppImage` happens after
+      # tauri-action emits the bundles (see "Sign Linux artifacts" below).
+      # -----------------------------------------------------------------------
+      - name: Import GPG key
+        if: runner.os == 'Linux'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ] || [ -z "${GPG_PASSPHRASE:-}" ] || [ -z "${GPG_KEY_ID:-}" ]; then
+            echo "::error::GPG_PRIVATE_KEY, GPG_PASSPHRASE, and GPG_KEY_ID are required for Linux signing." >&2
+            exit 1
+          fi
+          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          # Pre-cache the passphrase so the detached-sign step below is
+          # non-interactive. `--pinentry-mode loopback` is needed for the
+          # `--passphrase` flag to be honoured.
+          mkdir -p "${HOME}/.gnupg"
+          echo "use-agent" > "${HOME}/.gnupg/gpg.conf"
+          echo "pinentry-mode loopback" >> "${HOME}/.gnupg/gpg.conf"
+          echo "allow-loopback-pinentry" > "${HOME}/.gnupg/gpg-agent.conf"
+          gpgconf --kill gpg-agent || true
+          # Sanity check the key is present.
+          gpg --list-secret-keys "${GPG_KEY_ID}"
+          echo "Imported GPG key ${GPG_KEY_ID}."
+
+      # -----------------------------------------------------------------------
+      # The build itself. tauri-action wraps `pnpm tauri build`, picks up
+      # the imported certs/keys, and emits `.sig` files alongside each
+      # bundle that the updater manifest will reference.
+      # -----------------------------------------------------------------------
+      - name: Build + sign Tauri bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Re-export here so the action sees them inside its run scope.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS notarisation
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Windows (also surfaced via the import step's GITHUB_ENV writes,
+          # but explicit here for legibility).
+          TAURI_WINDOWS_SIGNING_CERTIFICATE_PATH: ${{ env.TAURI_WINDOWS_SIGNING_CERTIFICATE_PATH }}
+          TAURI_WINDOWS_SIGNING_PASSWORD: ${{ env.TAURI_WINDOWS_SIGNING_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          # We do NOT let tauri-action publish to the Release directly;
+          # the dedicated `publish` job aggregates artifacts across legs
+          # and emits the signed updater manifest. tauri-action's release
+          # mode is single-leg-per-tag.
+          tagName: ${{ needs.setup.outputs.tag }}
+          releaseId: ""
+          args: --target ${{ matrix.target }} --verbose
+          includeUpdaterJson: false
+
+      # -----------------------------------------------------------------------
+      # Linux: detached-sign the AppImage and .deb after tauri-action emits
+      # them. Tauri's updater `.sig` is independent of these GPG signatures;
+      # the GPG signatures are for users who install the .deb via apt.
+      # -----------------------------------------------------------------------
+      - name: Sign Linux artifacts (AppImage + deb)
+        if: runner.os == 'Linux'
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          shopt -s nullglob
+          for f in "${BUNDLE_DIR}"/appimage/*.AppImage "${BUNDLE_DIR}"/deb/*.deb; do
+            if [ ! -f "${f}" ]; then
+              continue
+            fi
+            echo "GPG-signing ${f}"
+            gpg --batch --yes \
+              --pinentry-mode loopback \
+              --passphrase "${GPG_PASSPHRASE}" \
+              --local-user "${GPG_KEY_ID}" \
+              --detach-sign \
+              --armor \
+              --output "${f}.asc" \
+              "${f}"
+          done
+
+      # -----------------------------------------------------------------------
+      # SHA256 every artifact in the bundle dir. We aggregate per-leg SHA
+      # files in `publish` into a single SHA256SUMS.
+      # -----------------------------------------------------------------------
+      - name: Compute SHA256 sums
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          OUT="${RUNNER_TEMP}/sha256-${{ matrix.os }}.txt"
+          : > "${OUT}"
+          shopt -s nullglob globstar
+          for f in "${BUNDLE_DIR}"/**/*; do
+            if [ -f "${f}" ]; then
+              # GitHub-flavoured: hash + 2 spaces + filename relative to bundle dir
+              REL="${f#"${BUNDLE_DIR}/"}"
+              if command -v sha256sum > /dev/null 2>&1; then
+                (cd "${BUNDLE_DIR}" && sha256sum "${REL}") >> "${OUT}"
+              else
+                # macOS uses `shasum -a 256`
+                (cd "${BUNDLE_DIR}" && shasum -a 256 "${REL}") >> "${OUT}"
+              fi
+            fi
+          done
+          echo "Per-leg SHA256 manifest:"
+          cat "${OUT}"
+
+      - name: Upload OS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.os }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload SHA256 partial
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-${{ matrix.os }}
+          path: ${{ runner.temp }}/sha256-${{ matrix.os }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # publish - aggregate artifacts, emit `latest-<channel>.json`, create the
+  # GitHub Release, attach everything.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish GitHub Release + updater manifest
+    needs:
+      - setup
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need tag annotation for release notes.
+          fetch-depth: 0
+
+      - name: Download all OS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: bundle-*
+          merge-multiple: true
+
+      - name: Download all SHA256 partials
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-sha
+          pattern: sha256-*
+
+      - name: Aggregate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="${GITHUB_WORKSPACE}/SHA256SUMS"
+          : > "${OUT}"
+          # Concatenate every per-leg partial. Each line is already in
+          # `<hash>  <relative-path>` form.
+          find dist-sha -type f -name '*.txt' -print0 \
+            | sort -z \
+            | xargs -0 cat >> "${OUT}"
+          echo "Aggregated SHA256SUMS:"
+          cat "${OUT}"
+
+      - name: Resolve release notes from tag annotation
+        id: notes
+        env:
+          TAG: ${{ needs.setup.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Annotated tag message; falls back to a stub if the tag is
+          # lightweight (workflow_dispatch case).
+          NOTES=$(git tag -l --format='%(contents)' "${TAG}")
+          if [ -z "${NOTES}" ]; then
+            NOTES="Release ${TAG}. See git log for details."
+          fi
+          # Multiline-safe stash via heredoc delimiter.
+          {
+            echo "notes<<EOF_NOTES"
+            echo "${NOTES}"
+            echo "EOF_NOTES"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Generate signed Tauri Updater manifest
+        id: manifest
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          TAG: ${{ needs.setup.outputs.tag }}
+          CHANNEL: ${{ needs.setup.outputs.channel }}
+          MANIFEST_NAME: ${{ needs.setup.outputs.manifest_name }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Deterministic URL prefix; the GitHub Release upload step below
+          # places artifacts at predictable paths.
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          MANIFEST="${GITHUB_WORKSPACE}/${MANIFEST_NAME}"
+          # Emit the manifest with `jq` for safe JSON construction.
+          # Each platform entry has `url` (the bundle) and `signature` (the
+          # contents of the corresponding `.sig` file emitted by Tauri).
+          # `find ... -print0 | xargs -0 ...` keeps spaces safe on macOS DMG
+          # filenames.
+          read_sig() {
+            local sig_file="$1"
+            if [ -f "${sig_file}" ]; then
+              cat "${sig_file}"
+            else
+              echo ""
+            fi
+          }
+          # Resolve the canonical updater bundle per platform. Tauri's
+          # updater consumes:
+          #   macOS: <name>.app.tar.gz
+          #   Linux: <name>.AppImage
+          #   Windows: <name>.msi (when wix bundler is enabled) or .exe
+          DARWIN_AARCH64=$(find dist -type f -name '*aarch64*.app.tar.gz' | head -n1 || true)
+          DARWIN_X86_64=$(find dist -type f -name '*x86_64*.app.tar.gz' | head -n1 || true)
+          LINUX_X86_64=$(find dist -type f -name '*.AppImage' | head -n1 || true)
+          WINDOWS_X86_64=$(find dist -type f -name '*.msi' | head -n1 || true)
+          [ -n "${DARWIN_AARCH64}" ] || { echo "::error::Missing darwin aarch64 .app.tar.gz" >&2; exit 1; }
+          [ -n "${DARWIN_X86_64}" ] || { echo "::error::Missing darwin x86_64 .app.tar.gz" >&2; exit 1; }
+          [ -n "${LINUX_X86_64}" ] || { echo "::error::Missing linux x86_64 .AppImage" >&2; exit 1; }
+          [ -n "${WINDOWS_X86_64}" ] || { echo "::error::Missing windows x86_64 .msi" >&2; exit 1; }
+          DARWIN_AARCH64_SIG=$(read_sig "${DARWIN_AARCH64}.sig")
+          DARWIN_X86_64_SIG=$(read_sig "${DARWIN_X86_64}.sig")
+          LINUX_X86_64_SIG=$(read_sig "${LINUX_X86_64}.sig")
+          WINDOWS_X86_64_SIG=$(read_sig "${WINDOWS_X86_64}.sig")
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg notes "${NOTES}" \
+            --arg pub_date "${PUB_DATE}" \
+            --arg base "${BASE}" \
+            --arg darwin_aarch64 "$(basename "${DARWIN_AARCH64}")" \
+            --arg darwin_aarch64_sig "${DARWIN_AARCH64_SIG}" \
+            --arg darwin_x86_64 "$(basename "${DARWIN_X86_64}")" \
+            --arg darwin_x86_64_sig "${DARWIN_X86_64_SIG}" \
+            --arg linux_x86_64 "$(basename "${LINUX_X86_64}")" \
+            --arg linux_x86_64_sig "${LINUX_X86_64_SIG}" \
+            --arg windows_x86_64 "$(basename "${WINDOWS_X86_64}")" \
+            --arg windows_x86_64_sig "${WINDOWS_X86_64_SIG}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $darwin_aarch64_sig, url: ($base + "/" + $darwin_aarch64) },
+                "darwin-x86_64":  { signature: $darwin_x86_64_sig,  url: ($base + "/" + $darwin_x86_64) },
+                "linux-x86_64":   { signature: $linux_x86_64_sig,   url: ($base + "/" + $linux_x86_64) },
+                "windows-x86_64": { signature: $windows_x86_64_sig, url: ($base + "/" + $windows_x86_64) }
+              }
+            }' > "${MANIFEST}"
+          echo "Generated ${MANIFEST_NAME}:"
+          cat "${MANIFEST}"
+
+      - name: Flatten artifacts for upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          # Move every file under dist/** into a flat directory (keeping the
+          # basename only). GitHub Releases attaches artifacts by filename,
+          # not by path, so flattening is intentional.
+          find dist -type f -print0 \
+            | xargs -0 -I {} cp -p "{}" upload/
+          cp "${{ needs.setup.outputs.manifest_name }}" upload/
+          cp SHA256SUMS upload/
+          ls -lah upload
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag }}
+          name: All Seeing Eye ${{ needs.setup.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          # Stable releases are marked latest; beta releases are pre-release.
+          prerelease: ${{ needs.setup.outputs.is_prerelease == 'true' }}
+          make_latest: ${{ needs.setup.outputs.is_prerelease == 'true' && 'false' || 'true' }}
+          files: |
+            upload/*
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

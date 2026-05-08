@@ -47,5 +47,15 @@
     "macOS": {
       "minimumSystemVersion": "11.0"
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/joseairosa/allseeingeye/releases/latest/download/latest-stable.json",
+        "https://github.com/joseairosa/allseeingeye/releases/download/{{current_version}}/latest-beta.json"
+      ],
+      "pubkey": "REPLACE_WITH_TAURI_SIGNING_PUBLIC_KEY",
+      "dialog": false
+    }
   }
 }
