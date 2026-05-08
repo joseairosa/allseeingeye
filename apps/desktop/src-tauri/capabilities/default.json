@@ -9,6 +9,7 @@
     "core:window:allow-start-dragging",
     "core:app:default",
     "dialog:default",
-    "shell:default"
+    "shell:default",
+    "updater:default"
   ]
 }

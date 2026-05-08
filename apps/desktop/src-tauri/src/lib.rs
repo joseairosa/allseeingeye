@@ -61,6 +61,16 @@ pub use security::{
     SecurityError, Severity,
 };
 
+// Phase 6.2: re-export the auto-update IPC + settings surface at crate
+// root so the daily-check task and the Tauri command handlers can
+// reach `UpdateSettings`, `UpdateChannel`, etc. without crawling the
+// private module path. The frontend UI consumes the matching ts-rs
+// bindings under `bindings/updates/`.
+pub use ipc::updates::{
+    default_settings_path, spawn_daily_check, UpdateAvailable, UpdateChannel, UpdateError,
+    UpdateSettings,
+};
+
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -85,6 +95,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
@@ -120,6 +131,27 @@ pub fn run() {
             // `app.state::<...>()` later if needed.
             let _ = Box::leak(Box::new(pipeline));
 
+            // Phase 6.2 - load the user's update preferences (channel +
+            // auto-check). Falls back to in-memory defaults if the
+            // config dir cannot be resolved, so the app keeps running
+            // even on stripped-down hosts where `dirs::config_dir`
+            // returns None.
+            let settings = if let Some(p) = default_settings_path() {
+                UpdateSettings::load_or_default(p)
+            } else {
+                tracing::warn!(
+                    "no user config dir; update preferences will not persist this session"
+                );
+                UpdateSettings::load_or_default(std::path::PathBuf::from("update-channel.json"))
+            };
+            app.manage(settings);
+
+            // Spawn the daily background check. Sleeps 30s after launch
+            // before the first poll so the filesystem scan finishes
+            // first. Errors are logged via `tracing::warn!`; never
+            // shown to the user as toasts.
+            spawn_daily_check(app.handle().clone());
+
             app.manage(index);
             app.manage(scan_ctx);
             Ok(())
@@ -132,6 +164,12 @@ pub fn run() {
             ipc::commands::search,
             ipc::commands::start_full_scan,
             ipc::commands::get_health_summary,
+            ipc::updates::check_for_update,
+            ipc::updates::install_update_and_relaunch,
+            ipc::updates::get_update_channel,
+            ipc::updates::set_update_channel,
+            ipc::updates::get_auto_check_setting,
+            ipc::updates::set_auto_check_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

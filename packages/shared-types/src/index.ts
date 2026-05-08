@@ -29,6 +29,13 @@ export type { PipelineEvent } from "../../../apps/desktop/src-tauri/bindings/pip
 export type { ScanReport } from "../../../apps/desktop/src-tauri/bindings/pipeline/ScanReport";
 export type { UpsertKind } from "../../../apps/desktop/src-tauri/bindings/index/UpsertOutcome";
 
+// Phase 6.2: auto-update wire types. The frontend listens for the
+// `update-available` Tauri event (payload: `UpdateAvailable`) and
+// surfaces the IPC commands that toggle channel + auto-check.
+export type { UpdateAvailable } from "../../../apps/desktop/src-tauri/bindings/updates/UpdateAvailable";
+export type { UpdateChannel } from "../../../apps/desktop/src-tauri/bindings/updates/UpdateChannel";
+export type { UpdateError } from "../../../apps/desktop/src-tauri/bindings/updates/UpdateError";
+
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";
 

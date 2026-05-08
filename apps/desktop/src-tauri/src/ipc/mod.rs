@@ -18,6 +18,7 @@
 
 pub mod commands;
 pub mod types;
+pub mod updates;
 
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::broadcast;
