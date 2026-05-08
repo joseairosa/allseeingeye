@@ -1,0 +1,42 @@
+/* Global app styles.
+ *
+ * Design system is the verbatim port of `design/styles.css`. Per docs/07,
+ * the design language is locked - we treat it as the source of truth and
+ * write only thin glue here. Future Tailwind utilities (Phase 0.3+) layer
+ * on top without redefining tokens.
+ */
+@import "./design-system.css";
+
+/* App-only fixes that are not part of the static prototype. */
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Honor the OS theme preference for first launch.
+ * The user can override via the in-app theme toggle, which adds `body.light`. */
+@media (prefers-color-scheme: light) {
+  body:not(.theme-dark):not(.light) {
+    /* No-op for now; real auto-theme lands with the settings store. */
+  }
+}
+
+/* Prevent the WebView's default text selection for chrome surfaces.
+ * Editor content opts back in via .editor / .raw-pane selectors. */
+.titlebar,
+.sidebar,
+.statusbar,
+.command-palette,
+.quicklook-header {
+  user-select: none;
+  -webkit-user-select: none;
+}
