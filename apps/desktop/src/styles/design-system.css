@@ -88,6 +88,60 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+/* On-brand scrollbars.
+   - Firefox: `scrollbar-color` on the document root.
+   - WebKit / Chromium: pseudo-element styling. Tauri uses WKWebView on
+     macOS, WebKitGTK on Linux, and WebView2 (Chromium) on Windows; all
+     three honour the pseudo-elements below.
+   - Track stays as the surface beneath whatever container scrolls so
+     the bar reads as part of the panel, not floating glass.
+   - Thumb resolves through `--border-strong` at rest and lifts to
+     `--accent-1` on hover so the same blue that drives nav highlights
+     and focus rings doubles as the scroll affordance. */
+:root,
+body.light {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+  transition: background-color 160ms ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--accent-1);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--accent-2);
+}
+
+/* Thinner overlay-style bars for dense secondary surfaces (lists,
+   QuickLook). The 6px width keeps them from competing with content. */
+.inventory-list::-webkit-scrollbar,
+.inventory-list::-webkit-scrollbar-thumb,
+.quicklook::-webkit-scrollbar,
+.quicklook::-webkit-scrollbar-thumb,
+.cmdk-results::-webkit-scrollbar,
+.cmdk-results::-webkit-scrollbar-thumb {
+  width: 6px;
+  height: 6px;
+}
+
 svg {
   display: block;
 }
