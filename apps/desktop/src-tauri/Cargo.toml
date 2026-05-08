@@ -35,6 +35,25 @@ ts-rs = { version = "10", features = ["serde-compat"] }
 dirs = "5"
 which = "6"
 
+# Phase 1.2: SQLite index + FTS5 + migrations
+# rusqlite "bundled" pins libsqlite3 to the crate's vendored copy so the FTS5
+# build is deterministic across mac/win/linux dev machines.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# r2d2 + r2d2_sqlite give us a small read-only connection pool so frontend
+# reads don't contend with the single index-writer task. r2d2_sqlite 0.25
+# is the version that pairs with rusqlite 0.32.
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+# parking_lot::Mutex is the low-overhead lock guarding the single write
+# Connection. We avoid std::sync::Mutex because we want the no-poison and
+# faster fast-path semantics across Tokio tasks.
+parking_lot = "0.12"
+
+# Phase 1.5: atomic writer + safety guards
+# v4 random suffix for collision-resistant temp file names during atomic
+# write (`<path>.aseye-tmp-<uuid>`). Pinned to v1.x latest stable.
+uuid = { version = "1", features = ["v4"] }
+
 [dev-dependencies]
 tempfile = "3"
 

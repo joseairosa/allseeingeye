@@ -11,6 +11,24 @@ mod parser;
 mod index;
 mod ipc;
 mod mcp;
+mod fs;
+
+// Phase 1.2: re-export the index public surface at the crate root so
+// future Tauri state setup (Phase 1.6) can write
+// `aseye_desktop_lib::IndexHandle` without reaching into the private
+// module path. We expose the handle, the error type, the pooled-read
+// connection alias, the module-local `Result`, and the per-platform
+// default path resolver - everything an IPC consumer needs.
+pub use index::{default_db_path, IndexError, IndexHandle, ReadConnection, Result as IndexResult};
+
+// Phase 1.5: re-export the atomic-write + safety guard surface at crate
+// root so the IPC handlers in Phase 1.6 (and any other in-crate consumer)
+// can call `aseye_desktop_lib::safe_atomic_write(...)` without reaching
+// into the private module path. Mirrors how `IndexHandle` is exposed.
+pub use fs::{
+    assert_safe_target, assert_safe_target_with_override, assert_within_root, atomic_write,
+    safe_atomic_write, safe_atomic_write_with_options, write_sidecar_backup, FsError,
+};
 
 use tauri::Manager;
 
