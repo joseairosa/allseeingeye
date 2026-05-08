@@ -43,6 +43,11 @@ fi
 
 if [[ -n "$TOOLCHAIN_BIN" ]]; then
   export PATH="$TOOLCHAIN_BIN:$PATH"
+  # An inherited RUSTUP_TOOLCHAIN (e.g. from a user's shell rc pinning a
+  # different version for another project) overrides the binary on PATH
+  # and silently routes cargo to whatever rustup default is installed.
+  # Unsetting it ensures the project's pinned toolchain wins.
+  unset RUSTUP_TOOLCHAIN
 fi
 
 exec "$@"
