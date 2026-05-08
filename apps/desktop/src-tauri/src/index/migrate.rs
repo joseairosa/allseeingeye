@@ -38,10 +38,22 @@ const V1_BOOTSTRAP: &[&str] = &[
     schema::CREATE_IDX_USAGE_COMPONENT_TS,
 ];
 
+/// Phase 7.1 migration: add the `security_finding` and
+/// `security_finding_suppression` tables. Mirrored from
+/// `docs/12-security.md` ("Privacy model and finding data"). Order
+/// matters: `security_finding`'s FK to `component(id)` is created
+/// before the indexes that reference its columns.
+const V2_SECURITY_TABLES: &[&str] = &[
+    schema::CREATE_SECURITY_FINDING,
+    schema::CREATE_IDX_FINDING_COMPONENT,
+    schema::CREATE_IDX_FINDING_SEVERITY_DETECTED,
+    schema::CREATE_SECURITY_FINDING_SUPPRESSION,
+];
+
 /// Registered migrations. Keep sorted ascending by version. The runner
 /// refuses to open a DB whose stored version is higher than the maximum
 /// here - that means a future build wrote it.
-const MIGRATIONS: &[(u32, &[&str])] = &[(1, V1_BOOTSTRAP)];
+const MIGRATIONS: &[(u32, &[&str])] = &[(1, V1_BOOTSTRAP), (2, V2_SECURITY_TABLES)];
 
 /// Highest migration version known to this build.
 #[must_use]
@@ -127,15 +139,15 @@ mod tests {
     fn migrate_clean_database() {
         let mut conn = fresh_in_memory();
         let v = run_migrations(&mut conn).expect("run migrations");
-        assert_eq!(v, 1);
+        assert_eq!(v, latest_version());
 
-        // schema_version row must exist with version 1.
+        // schema_version row must exist with the latest version.
         let stored: u32 = conn
             .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
             .expect("read schema_version");
-        assert_eq!(stored, 1);
+        assert_eq!(stored, latest_version());
 
-        // All 9 logical tables from docs/05 + our schema_version row.
+        // All v1 tables (docs/05) + v2 security tables + schema_version.
         // FTS5 virtual tables register as `type='table'` in
         // sqlite_master, so a name-equality check is enough.
         for table in [
@@ -149,6 +161,8 @@ mod tests {
             "health_probe",
             "usage_event",
             "schema_version",
+            "security_finding",
+            "security_finding_suppression",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -160,11 +174,13 @@ mod tests {
             assert!(n >= 1, "expected table {table} to exist");
         }
 
-        // The three explicit indexes from docs/05.
+        // Indexes from v1 + v2.
         for idx in [
             "idx_component_tool_type",
             "idx_component_mtime",
             "idx_usage_component_ts",
+            "idx_finding_component",
+            "idx_finding_severity_detected",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -182,8 +198,8 @@ mod tests {
         let mut conn = fresh_in_memory();
         let first = run_migrations(&mut conn).expect("first run");
         let second = run_migrations(&mut conn).expect("second run");
-        assert_eq!(first, 1);
-        assert_eq!(second, 1);
+        assert_eq!(first, latest_version());
+        assert_eq!(second, latest_version());
 
         // No duplicate `component` table got created on second run.
         let comp_tables: i64 = conn
@@ -214,9 +230,65 @@ mod tests {
         match err {
             IndexError::SchemaVersionMismatch { found, known } => {
                 assert_eq!(found, 999);
-                assert_eq!(known, 1);
+                assert_eq!(known, latest_version());
             }
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn migration_v2_creates_security_tables() {
+        // Open a clean in-memory DB, run migrations, and assert the
+        // security tables exist with the expected columns. The
+        // doctest for `migrate_clean_database` covers presence; this
+        // test pins the column shape so future migrations don't drift
+        // it without a notice.
+        let mut conn = fresh_in_memory();
+        let v = run_migrations(&mut conn).expect("migrate");
+        assert_eq!(v, 2);
+
+        // `security_finding` columns.
+        let mut stmt = conn.prepare("PRAGMA table_info(security_finding)").unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        for col in [
+            "id",
+            "component_id",
+            "category",
+            "pattern",
+            "severity",
+            "file_path",
+            "line",
+            "source_label",
+            "redacted_preview",
+            "detected_at",
+            "suppressed",
+            "suppress_reason",
+            "suppress_until",
+        ] {
+            assert!(
+                cols.iter().any(|c| c == col),
+                "expected column {col} on security_finding, got {cols:?}"
+            );
+        }
+
+        // `security_finding_suppression` columns.
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(security_finding_suppression)")
+            .unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        for col in ["component_id", "pattern", "suppressed_at", "reason"] {
+            assert!(
+                cols.iter().any(|c| c == col),
+                "expected column {col} on security_finding_suppression, got {cols:?}"
+            );
         }
     }
 }

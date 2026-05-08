@@ -149,3 +149,60 @@ CREATE TABLE schema_version (
   version INTEGER NOT NULL
 );
 ";
+
+// Phase 7.1: Security audit tables. Mirrored from
+// `docs/12-security.md` ("Privacy model and finding data"). The
+// `evidence_json` column from the spec is intentionally deferred to
+// Phase 7.2 (where MCP-permission findings need structured evidence) -
+// secret findings are fully described by `pattern`, `redacted_preview`,
+// `source_label`, and `line` so the column would currently be a free
+// NULL on every row.
+
+/// Security findings produced by every audit pass. One row per stable
+/// finding id (the scanner deterministically derives the id from the
+/// source label, category, pattern, and matched byte range, so a
+/// re-scan that yields the same match is a no-op via the upsert's
+/// `ON CONFLICT(id) DO NOTHING`). `ON DELETE CASCADE` keeps the
+/// findings tied to their owning component - if the component is
+/// removed from the index, its findings vanish with it.
+pub const CREATE_SECURITY_FINDING: &str = "
+CREATE TABLE security_finding (
+  id              TEXT PRIMARY KEY,
+  component_id    TEXT NOT NULL REFERENCES component(id) ON DELETE CASCADE,
+  category        TEXT NOT NULL,
+  pattern         TEXT NOT NULL,
+  severity        TEXT NOT NULL,
+  file_path       TEXT NOT NULL,
+  line            INTEGER,
+  source_label    TEXT NOT NULL,
+  redacted_preview TEXT NOT NULL,
+  detected_at     INTEGER NOT NULL,
+  suppressed      INTEGER NOT NULL DEFAULT 0,
+  suppress_reason TEXT,
+  suppress_until  INTEGER
+);
+";
+
+/// Index covering "findings for this component" - the access pattern
+/// of the per-component Quick Look panel.
+pub const CREATE_IDX_FINDING_COMPONENT: &str =
+    "CREATE INDEX idx_finding_component ON security_finding(component_id);";
+
+/// Index covering "newest critical/high findings first" - the access
+/// pattern of the Security view's default sort.
+pub const CREATE_IDX_FINDING_SEVERITY_DETECTED: &str =
+    "CREATE INDEX idx_finding_severity_detected ON security_finding(severity, detected_at DESC);";
+
+/// User-applied per-(component, pattern) suppressions. The suppress
+/// flow lives in the security UI; this table is the persistent store
+/// the audit engine consults when deciding whether to re-emit a
+/// finding on subsequent upserts.
+pub const CREATE_SECURITY_FINDING_SUPPRESSION: &str = "
+CREATE TABLE security_finding_suppression (
+  component_id    TEXT NOT NULL,
+  pattern         TEXT NOT NULL,
+  suppressed_at   INTEGER NOT NULL,
+  reason          TEXT,
+  PRIMARY KEY (component_id, pattern)
+);
+";

@@ -90,6 +90,16 @@ sha2 = "0.10"
 # graph indirectly.
 globset = "0.4"
 
+# Phase 7.1: secret detection engine. The security module relies on a
+# curated regex set (Anthropic / OpenAI / GitHub / AWS / JWT / private
+# keys / bare passwords / generic secret-shaped values) compiled once at
+# startup via `RegexSet` for the first-pass scan and per-pattern
+# `Regex::find_iter` to extract spans for confirmed hits. `regex` v1 is
+# the de-facto Rust regex engine, already pulled in transitively by
+# `globset` and `tracing-subscriber`, so declaring it here makes the
+# direct dependency auditable rather than implicit.
+regex = "1"
+
 [dev-dependencies]
 tempfile = "3"
 # `proptest` powers the round-trip property tests for the parser layer:

@@ -12,6 +12,7 @@ mod mcp;
 mod parser;
 mod pipeline;
 mod registry;
+mod security;
 mod watcher;
 
 // Phase 1.2: re-export the index public surface at the crate root so
@@ -49,6 +50,16 @@ pub use parser::{
 // Phase 1.6: re-export the live-index pipeline + IPC surface at crate
 // root.
 pub use pipeline::{Pipeline, PipelineError, PipelineEvent, ScanContext, ScanReport};
+
+// Phase 7.1: re-export the security audit surface at crate root so
+// callers (the upsert layer today, the IPC handlers in Phase 7.3) can
+// reach the scanner and finding shape without crawling the private
+// module path. Mirrors the pattern used for `IndexHandle`, `Watcher`,
+// and `Pipeline`.
+pub use security::{
+    persist_findings, redact, scan_parsed, scan_text, Category as SecurityCategory, Finding,
+    SecurityError, Severity,
+};
 
 use std::sync::Arc;
 

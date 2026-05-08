@@ -26,6 +26,7 @@ use super::error::{IndexError, Result};
 use super::IndexHandle;
 use crate::parser::{parse_file, ParseError, ParsedComponent};
 use crate::registry::types::{ComponentRoot, ComponentType, Scope, ToolDescriptor, ToolId};
+use crate::security;
 
 /// Outcome of an `upsert_component` call.
 ///
@@ -206,6 +207,24 @@ fn write_parsed(
 
     upsert_component_file(conn, id, &path_str, file_role(root))?;
     upsert_component_fts(conn, id, name, description.as_deref().unwrap_or(""), &body)?;
+
+    // Phase 7.1: synchronous secret-detection pass on the parsed
+    // component. The scanner is pure and never panics; failures from
+    // the persistence layer are swallowed (logged) so a security
+    // store glitch never aborts the upsert. Honour suppressions
+    // (Phase 7.3): a row in `security_finding_suppression` for
+    // `(component_id, pattern)` prevents the finding from being
+    // re-inserted on subsequent upserts.
+    let findings = security::scan_parsed(parsed);
+    if !findings.is_empty() {
+        if let Err(err) = security::persist_findings(conn, id, &path_str, &findings) {
+            tracing::debug!(
+                component = id,
+                error = ?err,
+                "security_finding persistence failed; component upsert kept"
+            );
+        }
+    }
 
     Ok(UpsertOutcome {
         id: id.to_owned(),
@@ -719,6 +738,67 @@ mod tests {
         let outcome =
             upsert_component(&handle, &descriptor, root, &path, "foo").expect("second upsert");
         assert_eq!(outcome.kind, UpsertKind::Updated);
+    }
+
+    #[test]
+    fn upsert_records_findings() {
+        // Phase 7.1: a JSON file containing a fake `sk-ant-...` value
+        // must produce a `security_finding` row whose category is
+        // `secret`, redacted preview hides the credential, and source
+        // label points at the matching JSON pointer.
+        let home = tempdir().expect("tempdir");
+        let claude_dir = home.path().join(".claude");
+        fs::create_dir_all(&claude_dir).expect("mkdir");
+        let settings = claude_dir.join("settings.json");
+        // Embed an Anthropic-shaped key inside a nested JSON value so
+        // we exercise the structured walker, not just the body path.
+        fs::write(
+            &settings,
+            br#"{"env": {"ANTHROPIC_API_KEY": "sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#,
+        )
+        .expect("write");
+
+        let descriptor = tools::claude_code();
+        let root = descriptor
+            .component_roots
+            .iter()
+            .find(|r| {
+                r.component_type == ComponentType::Settings
+                    && r.path_pattern == "~/.claude/settings.json"
+            })
+            .expect("settings root");
+
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let outcome =
+            upsert_component(&handle, &descriptor, root, &settings, "settings").expect("upsert");
+        assert!(!outcome.had_parse_error);
+
+        // One finding row, category=secret, pattern=anthropic-key,
+        // source_label points at the env key.
+        let row: (String, String, String, String) = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT category, pattern, source_label, redacted_preview
+                     FROM security_finding WHERE component_id = ?1",
+                    params![outcome.id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(row.0, "secret");
+        assert_eq!(row.1, "anthropic-key");
+        assert_eq!(row.2, "/env/ANTHROPIC_API_KEY");
+        // Preview hides the body of the credential.
+        assert!(
+            row.3.contains('\u{2026}'),
+            "preview should be redacted: {}",
+            row.3
+        );
+        assert!(
+            !row.3.contains("aaaaaaaa"),
+            "preview must not embed the credential: {}",
+            row.3
+        );
     }
 
     #[test]
