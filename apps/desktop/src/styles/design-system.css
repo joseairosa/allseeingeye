@@ -1387,6 +1387,134 @@ body.light pre {
   background: var(--accent-1);
 }
 
+/* Onboarding multi-step flow (Phase 4.1). Reuses the existing
+   .onboarding-panel chrome; these utilities only add layout for the
+   per-step body. No new tokens. */
+.onboarding-step-indicator {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.onboarding-lead {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.onboarding-progress-label {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin: 0;
+}
+
+.onboarding-error {
+  color: var(--error);
+  font-size: 12px;
+  margin: 0;
+}
+
+.onboarding-tool-list {
+  display: grid;
+  gap: 6px;
+}
+
+.onboarding-tool-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+}
+
+.onboarding-tool-row.quiet {
+  opacity: 0.7;
+}
+
+.onboarding-tool-name {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.onboarding-tool-path {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.onboarding-missing {
+  display: grid;
+  gap: 6px;
+}
+
+.onboarding-scan-report {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.onboarding-scan-report > div {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  padding: 10px;
+}
+
+.onboarding-scan-report dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.onboarding-scan-report dd {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 650;
+  margin: 0;
+}
+
+.onboarding-tour-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding-tour-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  padding: 10px 12px;
+}
+
+.onboarding-tour-item p {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.onboarding-tour-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
 /* SecretField primitive (Phase 4.4). Scoped, no new tokens. */
 .secret-field {
   display: grid;

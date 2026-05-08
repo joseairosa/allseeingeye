@@ -14,6 +14,7 @@ import { EditorView } from "@/views/EditorView";
 import { HealthView } from "@/views/HealthView";
 import { SettingsView } from "@/views/SettingsView";
 import { useHealthSummary, usePipelineEventInvalidator } from "@/ipc/hooks";
+import { loadOnboardingCompleted } from "@/lib/onboarding";
 
 /**
  * Resolve the effective theme, honouring the user's `system` selection.
@@ -64,6 +65,35 @@ function usePanicBodyClass(): void {
   }, [panicMode]);
 }
 
+/**
+ * Module-level guard so re-mounts (HMR, StrictMode double-invoke) don't
+ * pop the onboarding modal back open after the user has dismissed it
+ * within the current session.
+ */
+let onboardingAutoOpenAttempted = false;
+
+/**
+ * Detect a real Tauri runtime. Storybook + raw `vite preview` should
+ * never auto-open onboarding; only the packaged desktop shell or
+ * `tauri dev` injects the IPC bridge under `window.__TAURI_INTERNALS__`.
+ */
+function isTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as { __TAURI_INTERNALS__?: unknown };
+  return typeof w.__TAURI_INTERNALS__ !== "undefined";
+}
+
+function useFirstLaunchOnboarding(): void {
+  const toggleOnboarding = useUi((s) => s.toggleOnboarding);
+  useEffect(() => {
+    if (onboardingAutoOpenAttempted) return;
+    onboardingAutoOpenAttempted = true;
+    if (!isTauriRuntime()) return;
+    if (loadOnboardingCompleted()) return;
+    toggleOnboarding(true);
+  }, [toggleOnboarding]);
+}
+
 export function App() {
   useResolvedTheme();
   useDensityClass();
@@ -71,6 +101,7 @@ export function App() {
   usePanicBodyClass();
   useGlobalKeyboard();
   usePipelineEventInvalidator();
+  useFirstLaunchOnboarding();
 
   const panicMode = useUi((s) => s.panicMode);
   const health = useHealthSummary();
