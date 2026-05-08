@@ -109,10 +109,16 @@ svg {
 
 .app-shell {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(680px, 1fr) var(--quicklook-width);
+  /* The QuickLook is a slide-over (absolutely positioned within the
+     shell), not a grid column - reserving 420px when it's closed
+     leaves the main content choked. The shell is two columns now:
+     sidebar + main. The QuickLook overlays the right edge when open. */
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
   min-height: 100vh;
   overflow: hidden;
+  /* Provides the positioning context for `.quicklook { position: absolute }`. */
+  position: relative;
 }
 
 body.compact {
@@ -123,13 +129,17 @@ body.compact {
 .titlebar {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 180px 1fr 180px;
+  /* Three-column layout. The first column reserves 80px for the macOS
+     traffic lights that the OS draws (we set `titleBarStyle: Transparent`
+     in tauri.conf.json, which makes the native bar invisible but
+     the lights still occupy this region). On Linux / Windows the
+     reservation is harmless padding. */
+  grid-template-columns: 80px 1fr 100px;
   align-items: center;
   height: var(--titlebar-height);
-  padding: 0 12px;
+  padding: 0 12px 0 0;
   border-bottom: 1px solid var(--border-subtle);
-  background: rgba(9, 12, 18, 0.8);
-  backdrop-filter: blur(18px);
+  background: var(--bg-base);
   -webkit-app-region: drag;
 }
 
@@ -814,8 +824,17 @@ body.reduced-motion .skeleton-block { animation: none; }
 }
 
 .quicklook {
-  grid-row: 2;
-  display: none;
+  /* Slide-over panel: absolutely positioned over the main content so
+     the grid doesn't reserve its width when closed. Anchored to the
+     right edge of the .app-shell positioning context. */
+  position: absolute;
+  top: var(--titlebar-height);
+  right: 0;
+  bottom: 0;
+  width: var(--quicklook-width);
+  transform: translateX(100%);
+  transition: transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
   min-height: 0;
   overflow: auto;
   padding: 18px;
@@ -823,10 +842,16 @@ body.reduced-motion .skeleton-block { animation: none; }
   background: var(--bg-glass);
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow: var(--shadow-soft);
+  z-index: 30;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quicklook { transition: none; }
 }
 
 .quicklook.open {
-  display: block;
+  transform: translateX(0);
+  pointer-events: auto;
 }
 
 .quicklook-header {

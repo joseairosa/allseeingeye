@@ -7,11 +7,11 @@ export function TitleBar() {
 
   return (
     <header className="titlebar" aria-label="window chrome" data-tauri-drag-region>
-      <div className="traffic" aria-hidden="true">
-        <span className="traffic-dot close" />
-        <span className="traffic-dot minimize" />
-        <span className="traffic-dot zoom" />
-      </div>
+      {/* macOS draws the native traffic lights via `titleBarStyle: "Transparent"`.
+          We reserve space for them via the `.titlebar` left-padding so this
+          section is purely the centred logo + name. On Linux / Windows the OS
+          chrome lives outside the WebView, so the same left-padding is
+          harmless padding. */}
       <div className="titlebar-center">
         <img src="/assets/eye-mark.svg" alt="" className="titlebar-logo" />
         <span>all seeing eye</span>
