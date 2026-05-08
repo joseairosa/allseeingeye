@@ -14,6 +14,7 @@ import { EditorView } from "@/views/EditorView";
 import { HealthView } from "@/views/HealthView";
 import { SettingsView } from "@/views/SettingsView";
 import { useHealthSummary, usePipelineEventInvalidator } from "@/ipc/hooks";
+import { useDiagnosticsRing } from "@/lib/diagnosticsRing";
 import { loadOnboardingCompleted } from "@/lib/onboarding";
 
 /**
@@ -101,6 +102,7 @@ export function App() {
   usePanicBodyClass();
   useGlobalKeyboard();
   usePipelineEventInvalidator();
+  useDiagnosticsRing();
   useFirstLaunchOnboarding();
 
   const panicMode = useUi((s) => s.panicMode);

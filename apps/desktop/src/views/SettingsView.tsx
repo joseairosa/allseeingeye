@@ -1,5 +1,6 @@
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
 import { detectedToolsFixture } from "@/lib/fixtures";
+import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
 
 /**
  * Settings view (Phase 4.4).
@@ -12,7 +13,12 @@ import { detectedToolsFixture } from "@/lib/fixtures";
  * Zustand store; mutating actions are wired to no-op handlers with a clear
  * TODO marker.
  */
-const APP_VERSION = "0.0.1";
+/**
+ * Build-time constant injected by Vite (`vite.config.ts::define`). Single
+ * source of truth for the app version; the Diagnostics panel uses the
+ * same value.
+ */
+const APP_VERSION = __APP_VERSION__;
 
 /**
  * Default sidecar / index DB path per `docs/05-data-architecture.md`.
@@ -327,18 +333,7 @@ function DiagnosticsPane() {
   return (
     <section className="health-pane settings-pane" aria-labelledby="settings-diagnostics">
       <h3 id="settings-diagnostics">Diagnostics</h3>
-      <div className="settings-row">
-        <div className="settings-row-label">
-          <strong>Diagnostics panel</strong>
-          <small className="settings-todo">
-            Coming soon (Phase 4.2) - dedicated panel with logs, IPC traces, and
-            plugin state.
-          </small>
-        </div>
-        <button type="button" className="text-button quiet" disabled>
-          open
-        </button>
-      </div>
+      <DiagnosticsPanel />
     </section>
   );
 }

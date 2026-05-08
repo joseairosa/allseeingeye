@@ -25,6 +25,12 @@ export interface UiState {
    */
   panicMode: boolean;
   /**
+   * `Date.now()` at the moment panic mode was last toggled (on or off),
+   * surfaced by the Diagnostics panel so support can see whether the user
+   * has been in panic mode recently. `null` until the first toggle.
+   */
+  panicModeLastToggledAt: number | null;
+  /**
    * User override for `prefers-reduced-motion`. `system` defers to OS.
    */
   reducedMotion: "system" | "on" | "off";
@@ -67,6 +73,7 @@ export const useUi = create<UiState>((set) => ({
   quickLookOpen: false,
   onboardingOpen: false,
   panicMode: false,
+  panicModeLastToggledAt: null,
   reducedMotion: "system",
   mcpProbing: "off",
   telemetryEnabled: false,
@@ -101,16 +108,21 @@ export const useUi = create<UiState>((set) => ({
   togglePanicMode: (force) =>
     set((s) => {
       const next = force ?? !s.panicMode;
+      // No-op if the requested state matches the current state - we
+      // don't bump `lastToggledAt` for a redundant toggle.
+      if (next === s.panicMode) return {};
+      const panicModeLastToggledAt = Date.now();
       // Activating panic mode forcibly closes any open surface that could
       // be revealing a secret or distracting the user.
       if (next) {
         return {
           panicMode: true,
+          panicModeLastToggledAt,
           quickLookOpen: false,
           paletteOpen: false,
           onboardingOpen: false,
         };
       }
-      return { panicMode: false };
+      return { panicMode: false, panicModeLastToggledAt };
     }),
 }));

@@ -1375,6 +1375,33 @@ body.light pre {
   color: var(--warn);
 }
 
+.palette-section-heading {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.palette-row-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.palette-row-snippet {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row.muted {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
 .onboarding-panel {
   display: grid;
   gap: 16px;
@@ -1658,6 +1685,196 @@ body.light pre {
   color: var(--text-tertiary);
   font-size: 12px;
   font-style: italic;
+}
+
+/* Diagnostics panel (Phase 4.2). Scoped to the Diagnostics section in
+   Settings. Reuses tokens from above; introduces no new colours. */
+.diagnostics-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.diagnostics-status {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.diagnostics-fallback {
+  display: grid;
+  gap: 6px;
+}
+
+.diagnostics-fallback-text {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  font-size: 11px;
+  resize: vertical;
+}
+
+.diagnostics-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.diagnostics-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.diagnostics-section h4 {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.diagnostics-section-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.diagnostics-meta-value {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.diagnostics-table {
+  display: grid;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.diagnostics-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 80px;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.diagnostics-table-row:last-child {
+  border-bottom: 0;
+}
+
+.diagnostics-table-row.head {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--bg-elev-2);
+}
+
+.diagnostics-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.diagnostics-list-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+}
+
+.diagnostics-list-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.diagnostics-list-body small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-watch-roots {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.diagnostics-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  padding: 6px 8px;
+}
+
+.diagnostics-event-row {
+  display: grid;
+  grid-template-columns: 140px 90px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+}
+
+.diagnostics-event-kind {
+  color: var(--text-secondary);
+}
+
+.diagnostics-event-time {
+  color: var(--text-tertiary);
+}
+
+.diagnostics-event-path {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Panic mode badge in titlebar (Phase 4.4). */
