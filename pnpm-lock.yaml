@@ -38,6 +38,9 @@ importers:
       '@aseye/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@eslint/js':
+        specifier: ^9.39.4
+        version: 9.39.4
       '@tauri-apps/cli':
         specifier: ^2.1.0
         version: 2.11.1

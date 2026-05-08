@@ -88,11 +88,8 @@ jobs:
       - name: Typecheck UI package
         run: pnpm --filter @aseye/ui typecheck
 
-      # Lint step is intentionally deferred. The desktop workspace declares
-      # `eslint .` as its lint command but no `eslint.config.js` lives in the
-      # repo yet (flat config landing alongside the Phase 1.x work). Adding
-      # the config is out of Phase 0.4 scope; the CI step will be re-enabled
-      # once the config exists. Tracked: see TODO in apps/desktop/package.json.
+      - name: Lint (desktop)
+        run: pnpm --filter @aseye/desktop lint
 
       - name: Frontend build
         run: pnpm --filter @aseye/desktop build
