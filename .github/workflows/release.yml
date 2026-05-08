@@ -1,0 +1,24 @@
+name: Release
+
+# Tag-driven release workflow placeholder.
+# Phase 6.3 (#34) extends this with Tauri's signing + notarisation pipeline,
+# matrix builds, draft GitHub Release, and updater feed publishing. For now
+# the job exists so tag pushes don't fall through silently and so the
+# extension target is obvious in PR diffs.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    name: Release placeholder
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Announce
+        run: echo "Release workflow placeholder for Phase 6.3 - tag ${GITHUB_REF_NAME}"

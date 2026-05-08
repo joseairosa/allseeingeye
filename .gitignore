@@ -45,3 +45,4 @@ coverage
 
 # Storybook
 storybook-static
+packages/ui/storybook-static

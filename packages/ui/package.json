@@ -1,0 +1,29 @@
+{
+  "name": "@aseye/ui",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Storybook surface for All Seeing Eye design system. Stories import live components from @aseye/desktop; this package owns no production runtime code.",
+  "scripts": {
+    "storybook": "storybook dev -p 6006 --no-open",
+    "build-storybook": "storybook build --output-dir storybook-static",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aseye/desktop": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@aseye/shared-types": "workspace:*",
+    "@storybook/addon-themes": "9.1.20",
+    "@storybook/react-vite": "9.1.20",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "storybook": "9.1.20",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.1"
+  }
+}
