@@ -12,26 +12,80 @@ import { InventoryView } from "@/views/InventoryView";
 import { MapView } from "@/views/MapView";
 import { EditorView } from "@/views/EditorView";
 import { HealthView } from "@/views/HealthView";
+import { SettingsView } from "@/views/SettingsView";
 import { inventoryRows } from "@/lib/fixtures";
 
-function useBodyClasses() {
+/**
+ * Resolve the effective theme, honouring the user's `system` selection.
+ */
+function useResolvedTheme(): void {
   const theme = useUi((s) => s.theme);
-  const density = useUi((s) => s.density);
   useEffect(() => {
-    document.body.classList.toggle("light", theme === "light");
+    function apply(): void {
+      const prefersLight =
+        theme === "light" ||
+        (theme === "system" &&
+          typeof window !== "undefined" &&
+          window.matchMedia("(prefers-color-scheme: light)").matches);
+      document.body.classList.toggle("light", prefersLight);
+    }
+    apply();
+    if (theme !== "system") return;
+    const mql = window.matchMedia("(prefers-color-scheme: light)");
+    mql.addEventListener("change", apply);
+    return () => mql.removeEventListener("change", apply);
   }, [theme]);
+}
+
+function useDensityClass(): void {
+  const density = useUi((s) => s.density);
   useEffect(() => {
     document.body.classList.toggle("compact", density === "compact");
   }, [density]);
 }
 
+/**
+ * Apply the user's reduced-motion override on top of the OS preference.
+ * The CSS already short-circuits transitions when `prefers-reduced-motion`
+ * is set; here we just toggle a body class so a future stylesheet rule can
+ * force the same behaviour when the user opts in manually.
+ */
+function useReducedMotionOverride(): void {
+  const mode = useUi((s) => s.reducedMotion);
+  useEffect(() => {
+    document.body.classList.toggle("reduced-motion", mode === "on");
+  }, [mode]);
+}
+
+function usePanicBodyClass(): void {
+  const panicMode = useUi((s) => s.panicMode);
+  useEffect(() => {
+    document.body.classList.toggle("panic", panicMode);
+  }, [panicMode]);
+}
+
 export function App() {
-  useBodyClasses();
+  useResolvedTheme();
+  useDensityClass();
+  useReducedMotionOverride();
+  usePanicBodyClass();
   useGlobalKeyboard();
+
+  const panicMode = useUi((s) => s.panicMode);
 
   return (
     <div className="app-shell" data-density="comfortable">
       <TitleBar />
+      {panicMode ? (
+        <div
+          className="panic-badge"
+          role="status"
+          aria-live="polite"
+          style={{ position: "fixed", top: 8, right: 12, zIndex: 50 }}
+        >
+          panic
+        </div>
+      ) : null}
       <Sidebar />
       <main className="main-area">
         <MainHeader />
@@ -39,6 +93,7 @@ export function App() {
         <MapView />
         <EditorView />
         <HealthView />
+        <SettingsView />
         <Statusbar resultCount={inventoryRows.length} />
       </main>
       <QuickLook />

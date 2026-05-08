@@ -3,20 +3,31 @@ import { useUi } from "@/store/ui";
 
 /**
  * Global keyboard map.
- * Mirrors `design/app.js` shortcuts:
+ * Mirrors `design/app.js` shortcuts and the table in `docs/06-ux-design.md`:
  *   ⌘K            command palette
- *   ⌘1 / ⌘2 / ⌘3  inventory / map / editor
+ *   ⌘1 / ⌘2 / ⌘3  inventory / map / editor / health
+ *   ⌘,            settings view
+ *   ⌘⇧.           panic mode toggle (instant secret mask)
  *   Esc           close palette / onboarding / quick look
  */
-export function useGlobalKeyboard() {
+export function useGlobalKeyboard(): void {
   const togglePalette = useUi((s) => s.togglePalette);
   const toggleOnboarding = useUi((s) => s.toggleOnboarding);
   const toggleQuickLook = useUi((s) => s.toggleQuickLook);
+  const togglePanicMode = useUi((s) => s.togglePanicMode);
   const setView = useUi((s) => s.setView);
 
   useEffect(() => {
-    function onKey(event: KeyboardEvent) {
+    function onKey(event: KeyboardEvent): void {
       const mod = event.metaKey || event.ctrlKey;
+
+      // Panic mode (Cmd-Shift-.) - check before plain comma to avoid eating
+      // the modifier-Shift combination.
+      if (mod && event.shiftKey && event.key === ".") {
+        event.preventDefault();
+        togglePanicMode();
+        return;
+      }
 
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -24,9 +35,22 @@ export function useGlobalKeyboard() {
         return;
       }
 
+      // Cmd-, opens Settings (also accepts the `<` key which some layouts
+      // emit for Shift+comma; only fire when shift is NOT held).
+      if (mod && !event.shiftKey && event.key === ",") {
+        event.preventDefault();
+        setView("settings");
+        return;
+      }
+
       if (mod && ["1", "2", "3", "4"].includes(event.key)) {
         event.preventDefault();
-        const map = { "1": "inventory", "2": "map", "3": "editor", "4": "health" } as const;
+        const map = {
+          "1": "inventory",
+          "2": "map",
+          "3": "editor",
+          "4": "health",
+        } as const;
         setView(map[event.key as "1" | "2" | "3" | "4"]);
         return;
       }
@@ -39,5 +63,5 @@ export function useGlobalKeyboard() {
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [togglePalette, toggleOnboarding, toggleQuickLook, setView]);
+  }, [togglePalette, toggleOnboarding, toggleQuickLook, togglePanicMode, setView]);
 }

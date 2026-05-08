@@ -115,6 +115,7 @@ function HealthGroup() {
 
 export function Sidebar() {
   const toggleOnboarding = useUi((s) => s.toggleOnboarding);
+  const setView = useUi((s) => s.setView);
 
   return (
     <aside className="sidebar" aria-label="primary navigation">
@@ -147,7 +148,13 @@ export function Sidebar() {
         >
           tour
         </button>
-        <button type="button" className="footer-action">settings</button>
+        <button
+          type="button"
+          className="footer-action"
+          onClick={() => setView("settings")}
+        >
+          settings
+        </button>
         <span>v0.0.1</span>
       </footer>
     </aside>

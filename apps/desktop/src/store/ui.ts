@@ -1,8 +1,14 @@
 import { create } from "zustand";
 
-export type ViewId = "inventory" | "map" | "editor" | "health";
+export type ViewId = "inventory" | "map" | "editor" | "health" | "settings";
 export type Density = "comfortable" | "compact";
-export type Theme = "dark" | "light";
+/**
+ * `system` defers to `prefers-color-scheme`; `dark` and `light` force.
+ * The `body.light` class is applied by `App.tsx` based on the resolved theme.
+ */
+export type Theme = "dark" | "light" | "system";
+export type UpdateChannel = "stable" | "beta";
+export type McpProbingMode = "off" | "per-server" | "global";
 
 export interface UiState {
   view: ViewId;
@@ -13,15 +19,42 @@ export interface UiState {
   paletteOpen: boolean;
   quickLookOpen: boolean;
   onboardingOpen: boolean;
+  /**
+   * Panic mode: forces every `SecretField` to mask, closes Quick Look,
+   * the command palette, and onboarding. Toggled with Cmd-Shift-.
+   */
+  panicMode: boolean;
+  /**
+   * User override for `prefers-reduced-motion`. `system` defers to OS.
+   */
+  reducedMotion: "system" | "on" | "off";
+  /**
+   * Default MCP probing posture. Off by default per docs/06 F14.
+   */
+  mcpProbing: McpProbingMode;
+  /**
+   * Telemetry must remain off in MVP (docs/12). The setting exists but is
+   * read-only in the UI.
+   */
+  telemetryEnabled: false;
+  updateChannel: UpdateChannel;
+  autoCheckUpdates: boolean;
 
   setView: (view: ViewId) => void;
+  setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
+  setDensity: (density: Density) => void;
   toggleDensity: () => void;
+  setReducedMotion: (mode: UiState["reducedMotion"]) => void;
+  setMcpProbing: (mode: McpProbingMode) => void;
+  setUpdateChannel: (channel: UpdateChannel) => void;
+  setAutoCheckUpdates: (value: boolean) => void;
   setSearch: (search: string) => void;
   selectComponent: (id: string | null) => void;
   togglePalette: (force?: boolean) => void;
   toggleQuickLook: (force?: boolean) => void;
   toggleOnboarding: (force?: boolean) => void;
+  togglePanicMode: (force?: boolean) => void;
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -33,14 +66,29 @@ export const useUi = create<UiState>((set) => ({
   paletteOpen: false,
   quickLookOpen: false,
   onboardingOpen: false,
+  panicMode: false,
+  reducedMotion: "system",
+  mcpProbing: "off",
+  telemetryEnabled: false,
+  updateChannel: "stable",
+  autoCheckUpdates: true,
 
   setView: (view) => set({ view }),
+  setTheme: (theme) => set({ theme }),
   toggleTheme: () =>
-    set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
+    set((s) => ({
+      theme:
+        s.theme === "dark" ? "light" : s.theme === "light" ? "system" : "dark",
+    })),
+  setDensity: (density) => set({ density }),
   toggleDensity: () =>
     set((s) => ({
       density: s.density === "comfortable" ? "compact" : "comfortable",
     })),
+  setReducedMotion: (reducedMotion) => set({ reducedMotion }),
+  setMcpProbing: (mcpProbing) => set({ mcpProbing }),
+  setUpdateChannel: (updateChannel) => set({ updateChannel }),
+  setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
   setSearch: (search) => set({ search }),
   selectComponent: (id) =>
     set({ selectedComponentId: id, quickLookOpen: id !== null }),
@@ -50,4 +98,19 @@ export const useUi = create<UiState>((set) => ({
     set((s) => ({ quickLookOpen: force ?? !s.quickLookOpen })),
   toggleOnboarding: (force) =>
     set((s) => ({ onboardingOpen: force ?? !s.onboardingOpen })),
+  togglePanicMode: (force) =>
+    set((s) => {
+      const next = force ?? !s.panicMode;
+      // Activating panic mode forcibly closes any open surface that could
+      // be revealing a secret or distracting the user.
+      if (next) {
+        return {
+          panicMode: true,
+          quickLookOpen: false,
+          paletteOpen: false,
+          onboardingOpen: false,
+        };
+      }
+      return { panicMode: false };
+    }),
 }));

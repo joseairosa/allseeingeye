@@ -164,6 +164,51 @@ export const tools: ToolSummary[] = [
   { id: "antigravity", displayName: "Antigravity", count: 14, dotClass: "anti" },
 ];
 
+/**
+ * Settings-view fixture for the detected tools list. Falls back here while
+ * the `list_tools` IPC command is not yet exposed (Phase 1.6 / 2.1).
+ *
+ * TODO(phase-1.6): replace with `invoke<DetectedTool[]>('list_tools')`.
+ */
+export interface DetectedToolFixture {
+  id: ToolSummary["id"];
+  displayName: string;
+  rootPath: string;
+  indexed: boolean;
+  dotClass: ToolSummary["dotClass"];
+}
+
+export const detectedToolsFixture: DetectedToolFixture[] = [
+  {
+    id: "claude-code",
+    displayName: "Claude Code",
+    rootPath: "~/.claude",
+    indexed: true,
+    dotClass: "claude",
+  },
+  {
+    id: "codex",
+    displayName: "Codex",
+    rootPath: "~/.codex",
+    indexed: true,
+    dotClass: "codex",
+  },
+  {
+    id: "cursor",
+    displayName: "Cursor",
+    rootPath: "~/.cursor",
+    indexed: true,
+    dotClass: "cursor",
+  },
+  {
+    id: "antigravity",
+    displayName: "Antigravity",
+    rootPath: "~/.gemini/antigravity",
+    indexed: false,
+    dotClass: "anti",
+  },
+];
+
 export interface TypeSummary {
   id: ComponentType;
   displayName: string;
