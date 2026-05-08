@@ -27,6 +27,7 @@ use super::IndexHandle;
 use crate::parser::{parse_file, ParseError, ParsedComponent};
 use crate::registry::types::{ComponentRoot, ComponentType, Format, Scope, ToolDescriptor, ToolId};
 use crate::security;
+use crate::validator;
 
 /// Outcome of an `upsert_component` call.
 ///
@@ -188,6 +189,19 @@ fn write_parsed(
     let body = parsed.body.clone().unwrap_or_default();
     let size_i64 = i64::try_from(parsed.size).unwrap_or(i64::MAX);
 
+    // Phase 3.2: per-tool schema validation. Lenient for tuples we have
+    // no bundled schema for. Errors and warnings are serialised into
+    // the existing `parse_errors` column as a tagged JSON object so the
+    // UI can distinguish parse failures from validation failures
+    // without a schema migration; see
+    // `validator::render_validation_outcome_for_storage` for the shape.
+    let validation = validator::validate(parsed, descriptor.id, root.component_type);
+    let validation_json = if validation.errors.is_empty() && validation.warnings.is_empty() {
+        None
+    } else {
+        Some(validator::render_validation_outcome_for_storage(&validation).to_string())
+    };
+
     upsert_component_row(
         conn,
         id,
@@ -201,7 +215,7 @@ fn write_parsed(
         mtime,
         &parsed.hash,
         parsed_json.as_deref(),
-        None, // parse_errors
+        validation_json.as_deref(),
         now,
     )?;
 
@@ -473,10 +487,15 @@ fn render_parsed_json(parsed: &ParsedComponent) -> Option<String> {
 }
 
 fn render_parse_error_json(err: &ParseError) -> String {
-    // Compact JSON of `{"message":"..."}`; the parser error type is a
-    // typed enum but the UI consumes it as a string. We keep a single
-    // shape so the React side can render parse errors uniformly.
-    serde_json::json!({ "message": err.to_string() }).to_string()
+    // Phase 3.2: tagged shape `{"kind": "parse", "message": ...}` so the
+    // React side can switch on the discriminator and render parse vs
+    // validation errors with different badges. Pre-3.2 entries that
+    // lack `kind` are treated as `Parse` for back-compat.
+    serde_json::json!({
+        "kind": "parse",
+        "message": err.to_string(),
+    })
+    .to_string()
 }
 
 fn file_mtime(path: &Path) -> i64 {
@@ -816,6 +835,93 @@ mod tests {
             !row.3.contains("aaaaaaaa"),
             "preview must not embed the credential: {}",
             row.3
+        );
+    }
+
+    #[test]
+    fn upsert_records_validation_failure_for_malformed_claude_skill() {
+        // Phase 3.2 integration test: an upsert of a Claude Code skill
+        // missing its required `description` frontmatter must succeed
+        // (the parser doesn't reject it; the file parses fine) but
+        // record a validation failure in the `parse_errors` column with
+        // the new `kind = "validation"` tag.
+        let home = tempdir().expect("tempdir");
+        let dir = home.path().join(".claude").join("skills").join("badskill");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("SKILL.md");
+        // Note: no `description:` field, which the bundled Claude Code
+        // skill schema marks as required.
+        fs::write(&path, "---\nname: badskill\n---\nbody\n").expect("write");
+
+        let descriptor = tools::claude_code();
+        let root = descriptor
+            .component_roots
+            .iter()
+            .find(|r| r.component_type == ComponentType::Skill)
+            .expect("skill root");
+
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let outcome =
+            upsert_component(&handle, &descriptor, root, &path, "badskill").expect("upsert");
+        assert!(
+            !outcome.had_parse_error,
+            "parse must succeed; only validation should fail"
+        );
+
+        let pe: Option<String> = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT parse_errors FROM component WHERE id = ?1",
+                    params![outcome.id],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        let pe = pe.expect("parse_errors must be populated for a validation failure");
+        // Tagged shape - kind = validation - and at least one error.
+        let value: serde_json::Value =
+            serde_json::from_str(&pe).expect("parse_errors must round-trip as JSON");
+        assert_eq!(value["kind"], "validation");
+        let errors = value["errors"].as_array().expect("errors array");
+        assert!(!errors.is_empty(), "expected at least one validation error");
+        assert!(
+            errors.iter().any(|e| e["schemaKeyword"] == "required"),
+            "expected `required` keyword: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn upsert_no_validation_failure_writes_null_parse_errors() {
+        // A correctly-shaped Claude skill must NOT populate
+        // parse_errors. This is the negative twin of the test above:
+        // `setup_skill` (used by other tests in this module) writes a
+        // skill with `description`, which satisfies the bundled
+        // schema.
+        let home = tempdir().expect("tempdir");
+        let path = setup_skill(home.path(), "good", "body\n");
+        let descriptor = tools::claude_code();
+        let root = descriptor
+            .component_roots
+            .iter()
+            .find(|r| r.component_type == ComponentType::Skill)
+            .expect("skill root");
+
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let outcome = upsert_component(&handle, &descriptor, root, &path, "good").expect("upsert");
+        assert!(!outcome.had_parse_error);
+
+        let pe: Option<String> = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT parse_errors FROM component WHERE id = ?1",
+                    params![outcome.id],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert!(
+            pe.is_none(),
+            "valid skill should leave parse_errors NULL, got {pe:?}"
         );
     }
 

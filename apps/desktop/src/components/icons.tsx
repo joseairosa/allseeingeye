@@ -159,3 +159,29 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/**
+ * Outline shield used for Security surfaces (sidebar Health row,
+ * Inventory shield badge, Quick Look Security section, Security view
+ * row glyph). Severity colour is applied via the parent class
+ * (`shield-badge.critical`, etc.) so the icon picks up `currentColor`.
+ */
+export function ShieldIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+      <path d="M12 3l8 4v5a9 9 0 0 1-8 9 9 9 0 0 1-8-9V7l8-4z" />
+    </svg>
+  );
+}
+
+/**
+ * Filled check used for the Security view's "no findings" empty state.
+ */
+export function ShieldCheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+      <path d="M12 3l8 4v5a9 9 0 0 1-8 9 9 9 0 0 1-8-9V7l8-4z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}

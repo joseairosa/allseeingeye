@@ -22,6 +22,18 @@ export type { SearchQuery } from "../../../apps/desktop/src-tauri/bindings/ipc/S
 export type { SearchResult } from "../../../apps/desktop/src-tauri/bindings/ipc/SearchResult";
 export type { HealthSummary } from "../../../apps/desktop/src-tauri/bindings/ipc/HealthSummary";
 export type { ToolHealthCount } from "../../../apps/desktop/src-tauri/bindings/ipc/ToolHealthCount";
+export type { IpcError } from "../../../apps/desktop/src-tauri/bindings/ipc/IpcError";
+
+// Phase 7.3: Security view wire types.
+export type { Severity } from "../../../apps/desktop/src-tauri/bindings/security/Severity";
+export type { Category as SecurityCategory } from "../../../apps/desktop/src-tauri/bindings/security/Category";
+export type { Finding } from "../../../apps/desktop/src-tauri/bindings/security/Finding";
+export type { SecurityFilter } from "../../../apps/desktop/src-tauri/bindings/ipc/SecurityFilter";
+export type { FindingSummary } from "../../../apps/desktop/src-tauri/bindings/ipc/FindingSummary";
+export type { SeverityCounts } from "../../../apps/desktop/src-tauri/bindings/ipc/SeverityCounts";
+export type { ComponentFindingsCount } from "../../../apps/desktop/src-tauri/bindings/ipc/ComponentFindingsCount";
+export type { SecurityCategoryCounts } from "../../../apps/desktop/src-tauri/bindings/ipc/SecurityCategoryCounts";
+export type { SecuritySummary } from "../../../apps/desktop/src-tauri/bindings/ipc/SecuritySummary";
 
 // Pipeline event bridge types (Tauri `pipeline-event` channel + the
 // scan report returned by `start_full_scan`).

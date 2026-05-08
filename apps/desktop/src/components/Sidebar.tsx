@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useUi, type ViewId } from "@/store/ui";
-import { useHealthSummary, useTools } from "@/ipc/hooks";
+import { useHealthSummary, useSecuritySummary, useTools } from "@/ipc/hooks";
 import type { ComponentType, ToolId } from "@aseye/shared-types";
 import {
   NavEditorIcon,
@@ -171,11 +171,32 @@ const HEALTH_ROWS: readonly HealthRowMeta[] = [
   { id: "cold", label: "Cold", count: "-", ring: "cold" },
 ] as const;
 
+/**
+ * Pick the highest-severity status ring colour for the security row -
+ * red for any critical, amber for any high, grey otherwise. Mirrors
+ * the contract spelt out in `docs/12-security.md` ("Sidebar Health
+ * group" bullet) so the row signals severity at a glance without
+ * relying on numbers alone.
+ */
+function pickSecurityRing(
+  summary: ReturnType<typeof useSecuritySummary>["data"],
+): "error" | "warn" | "cold" {
+  if (!summary) return "cold";
+  if (summary.bySeverity.critical > 0) return "error";
+  if (summary.bySeverity.high > 0) return "error";
+  if (summary.bySeverity.medium > 0) return "warn";
+  return "cold";
+}
+
 function HealthGroup() {
   // Drift / MCP probing / cold-component detection ship in v1; the row
   // structure is in place so the sidebar layout doesn't reflow when
-  // those features land.
+  // those features land. The Security row is the one row driven by
+  // live IPC data today (Phase 7.3).
   const setView = useUi((s) => s.setView);
+  const { data: securitySummary } = useSecuritySummary();
+  const securityCount = securitySummary?.total ?? 0;
+  const securityRing = pickSecurityRing(securitySummary);
   return (
     <section className="side-group" aria-labelledby="health-label">
       <div className="side-label" id="health-label">health</div>
@@ -191,6 +212,16 @@ function HealthGroup() {
           <span className="side-count">{h.count}</span>
         </button>
       ))}
+      <button
+        type="button"
+        className="side-row"
+        onClick={() => setView("security")}
+        aria-label={`Security issues (${securityCount})`}
+      >
+        <span className={`status-ring ${securityRing}`} />
+        <span>Security issues</span>
+        <span className="side-count">{securityCount}</span>
+      </button>
     </section>
   );
 }

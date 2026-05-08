@@ -13,6 +13,7 @@ mod parser;
 mod pipeline;
 mod registry;
 mod security;
+mod validator;
 mod watcher;
 
 // Phase 1.2: re-export the index public surface at the crate root so
@@ -47,6 +48,18 @@ pub use parser::{
     MAX_PARSE_SIZE,
 };
 
+// Phase 5.2: re-export the registry classification surface at crate
+// root so the criterion benches under `benches/` can hold the perf
+// gate honest without reaching into the otherwise-private `registry`
+// module. Pure additive re-export; no behaviour change. The frontend
+// IPC layer continues to consume these via the existing `pipeline::*`
+// path, not these aliases.
+pub use registry::types::Format;
+pub use registry::{
+    classify_path as registry_classify_path, registry as registry_descriptors, DetectedTool,
+    ToolDescriptor,
+};
+
 // Phase 1.6: re-export the live-index pipeline + IPC surface at crate
 // root.
 pub use pipeline::{Pipeline, PipelineError, PipelineEvent, ScanContext, ScanReport};
@@ -59,6 +72,16 @@ pub use pipeline::{Pipeline, PipelineError, PipelineEvent, ScanContext, ScanRepo
 pub use security::{
     persist_findings, redact, scan_parsed, scan_text, Category as SecurityCategory, Finding,
     SecurityError, Severity,
+};
+
+// Phase 3.2: re-export the validator surface at crate root so the IPC
+// command (`validate_component`) and any future in-crate consumer can
+// reach `validate`, `validate_by_id`, and the outcome types without
+// crawling the private module path. Mirrors the security re-export
+// above.
+pub use validator::{
+    validate as validate_component_raw, validate_by_id, ParseErrorKind, ValidationError,
+    ValidationOutcome, ValidationWarning, ValidationWarningKind, ValidatorError,
 };
 
 // Phase 6.2: re-export the auto-update IPC + settings surface at crate
@@ -161,9 +184,18 @@ pub fn run() {
             ipc::commands::list_tools,
             ipc::commands::list_components,
             ipc::commands::get_component,
+            ipc::commands::read_component_raw,
             ipc::commands::search,
             ipc::commands::start_full_scan,
             ipc::commands::get_health_summary,
+            // Phase 7.3 - Security view IPC.
+            ipc::commands::list_security_findings,
+            ipc::commands::suppress_finding,
+            ipc::commands::unsuppress_finding,
+            ipc::commands::get_findings_count_per_component,
+            ipc::commands::get_security_summary,
+            // Phase 3.2 - per-tool schema validation by component id.
+            ipc::commands::validate_component,
             ipc::updates::check_for_update,
             ipc::updates::install_update_and_relaunch,
             ipc::updates::get_update_channel,

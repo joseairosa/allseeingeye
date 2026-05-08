@@ -13,6 +13,7 @@ import {
   getHealthSummary,
   listComponents,
   listTools,
+  readComponentRaw,
   search,
   startFullScan,
 } from "./index";
@@ -22,6 +23,7 @@ describe("ipc wrappers", () => {
     expect(typeof listTools).toBe("function");
     expect(typeof listComponents).toBe("function");
     expect(typeof getComponent).toBe("function");
+    expect(typeof readComponentRaw).toBe("function");
     expect(typeof search).toBe("function");
     expect(typeof startFullScan).toBe("function");
     expect(typeof getHealthSummary).toBe("function");

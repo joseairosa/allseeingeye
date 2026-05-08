@@ -21,23 +21,33 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ComponentDetail,
   ComponentFilter,
+  ComponentFindingsCount,
   ComponentSummary,
   DetectedTool,
+  FindingSummary,
   HealthSummary,
+  IpcError,
   ScanReport,
   SearchQuery,
   SearchResult,
+  SecurityFilter,
+  SecuritySummary,
 } from "@aseye/shared-types";
 
 export type {
   ComponentDetail,
   ComponentFilter,
+  ComponentFindingsCount,
   ComponentSummary,
   DetectedTool,
+  FindingSummary,
   HealthSummary,
+  IpcError,
   ScanReport,
   SearchQuery,
   SearchResult,
+  SecurityFilter,
+  SecuritySummary,
 };
 
 /** Probe the host system for the tools we know about. */
@@ -63,6 +73,15 @@ export async function getComponent(
   return invoke<ComponentDetail | null>("get_component", { id });
 }
 
+/**
+ * Phase 3.1 - load the raw on-disk text for a component into the
+ * Monaco pane. Rejects with the typed `IpcError` envelope when the
+ * file is missing, oversized (>5 MiB), or not valid UTF-8.
+ */
+export async function readComponentRaw(id: string): Promise<string> {
+  return invoke<string>("read_component_raw", { id });
+}
+
 /** FTS5-backed search over component name/description/parsed text. */
 export async function search(query: SearchQuery): Promise<SearchResult[]> {
   return invoke<SearchResult[]>("search", { query });
@@ -80,4 +99,50 @@ export async function startFullScan(): Promise<ScanReport> {
 /** Aggregate counts (totals + per-(tool, kind) breakdown). */
 export async function getHealthSummary(): Promise<HealthSummary> {
   return invoke<HealthSummary>("get_health_summary");
+}
+
+// ─── Phase 7.3 - Security view IPC ────────────────────────────────────
+
+/** Filtered, paginated list of security findings (severity DESC). */
+export async function listSecurityFindings(
+  filter: SecurityFilter,
+): Promise<FindingSummary[]> {
+  return invoke<FindingSummary[]>("list_security_findings", { filter });
+}
+
+/** Suppress a finding for the (component, pattern) pair. */
+export async function suppressFinding(
+  componentId: string,
+  pattern: string,
+  reason?: string,
+  ttlDays?: number,
+): Promise<void> {
+  return invoke<void>("suppress_finding", {
+    componentId,
+    pattern,
+    reason: reason ?? null,
+    ttlDays: ttlDays ?? null,
+  });
+}
+
+/** Drop a previously-applied suppression. */
+export async function unsuppressFinding(
+  componentId: string,
+  pattern: string,
+): Promise<void> {
+  return invoke<void>("unsuppress_finding", { componentId, pattern });
+}
+
+/** Per-component finding totals + per-severity breakdown for the inventory shield badge. */
+export async function getFindingsCountPerComponent(): Promise<
+  ComponentFindingsCount[]
+> {
+  return invoke<ComponentFindingsCount[]>(
+    "get_findings_count_per_component",
+  );
+}
+
+/** Aggregate counts (severity, category, suppressed) for the Sidebar Health row + Security view header. */
+export async function getSecuritySummary(): Promise<SecuritySummary> {
+  return invoke<SecuritySummary>("get_security_summary");
 }

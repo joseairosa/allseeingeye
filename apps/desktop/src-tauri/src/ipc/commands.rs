@@ -20,13 +20,15 @@ use rusqlite::params;
 use tauri::State;
 
 use super::types::{
-    ComponentDetail, ComponentFilter, ComponentSummary, HealthSummary, SearchQuery, SearchResult,
-    ToolHealthCount,
+    ComponentDetail, ComponentFilter, ComponentFindingsCount, ComponentSummary, FindingSummary,
+    HealthSummary, IpcError, SearchQuery, SearchResult, SecurityCategoryCounts, SecurityFilter,
+    SecuritySummary, SeverityCounts, ToolHealthCount,
 };
 use crate::index::upsert::{parse_component_type, parse_scope, parse_tool_id};
 use crate::index::IndexHandle;
 use crate::pipeline::{ScanContext, ScanReport};
 use crate::registry::types::{ComponentType, Format, Scope, ToolId};
+use crate::security::{Category as SecurityCategory, Severity};
 
 /// Server-side cap for `list_components` to protect the IPC channel
 /// from accidentally fetching the entire index in one call.
@@ -37,6 +39,16 @@ const LIST_COMPONENTS_DEFAULT_LIMIT: u32 = 200;
 const SEARCH_HARD_LIMIT: u32 = 200;
 /// Default `search` page size.
 const SEARCH_DEFAULT_LIMIT: u32 = 50;
+/// Maximum on-disk size we will read into the editor pane. Mirrors the
+/// parser's `MAX_PARSE_SIZE` so the editor never holds bytes the parser
+/// would refuse to process. 5 MiB.
+const READ_RAW_HARD_LIMIT: u64 = crate::parser::MAX_PARSE_SIZE;
+/// Server-side cap for `list_security_findings`. Mirrors
+/// `LIST_COMPONENTS_HARD_LIMIT` so a runaway query can't drag the entire
+/// finding table across the IPC boundary.
+const LIST_FINDINGS_HARD_LIMIT: u32 = 1000;
+/// Default page size for `list_security_findings`.
+const LIST_FINDINGS_DEFAULT_LIMIT: u32 = 200;
 
 #[tauri::command]
 pub fn list_tools() -> Vec<crate::registry::DetectedTool> {
@@ -59,6 +71,25 @@ pub fn get_component(
     get_component_inner(state.inner().as_ref(), &id).map_err(|e| e.to_string())
 }
 
+/// Phase 3.1 - return the raw on-disk text for a component so the
+/// Monaco pane can edit it directly. The command goes through the
+/// index to resolve `id -> path`, then reads the file synchronously.
+///
+/// Refuses to return more than [`READ_RAW_HARD_LIMIT`] bytes, matching
+/// the parser cap so we don't ship partial / unparseable content into
+/// the editor.
+///
+/// Returns a typed [`IpcError`] (rather than `String`) so the React
+/// layer can pattern-match the failure - "not found" renders an empty
+/// state, "payload too large" renders a dedicated warning, etc.
+#[tauri::command]
+pub fn read_component_raw(
+    state: State<'_, Arc<IndexHandle>>,
+    id: String,
+) -> Result<String, IpcError> {
+    read_component_raw_inner(state.inner().as_ref(), &id)
+}
+
 #[tauri::command]
 pub fn search(
     state: State<'_, Arc<IndexHandle>>,
@@ -70,6 +101,80 @@ pub fn search(
 #[tauri::command]
 pub fn get_health_summary(state: State<'_, Arc<IndexHandle>>) -> Result<HealthSummary, String> {
     health_summary_inner(state.inner().as_ref()).map_err(|e| e.to_string())
+}
+
+// ─── Phase 7.3 - Security view IPC ──────────────────────────────────────
+
+#[tauri::command]
+pub fn list_security_findings(
+    state: State<'_, Arc<IndexHandle>>,
+    filter: SecurityFilter,
+) -> Result<Vec<FindingSummary>, String> {
+    list_security_findings_inner(state.inner().as_ref(), &filter).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn suppress_finding(
+    state: State<'_, Arc<IndexHandle>>,
+    component_id: String,
+    pattern: String,
+    reason: Option<String>,
+    ttl_days: Option<u32>,
+) -> Result<(), String> {
+    suppress_finding_inner(
+        state.inner().as_ref(),
+        &component_id,
+        &pattern,
+        reason.as_deref(),
+        ttl_days,
+        now_unix_millis(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn unsuppress_finding(
+    state: State<'_, Arc<IndexHandle>>,
+    component_id: String,
+    pattern: String,
+) -> Result<(), String> {
+    unsuppress_finding_inner(state.inner().as_ref(), &component_id, &pattern)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_findings_count_per_component(
+    state: State<'_, Arc<IndexHandle>>,
+) -> Result<Vec<ComponentFindingsCount>, String> {
+    findings_count_per_component_inner(state.inner().as_ref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_security_summary(state: State<'_, Arc<IndexHandle>>) -> Result<SecuritySummary, String> {
+    security_summary_inner(state.inner().as_ref()).map_err(|e| e.to_string())
+}
+
+// ─── Phase 3.2 - per-tool schema validator IPC ──────────────────────────
+
+/// Re-run validation for a component identified by URI.
+///
+/// The Editor's form pane (Phase 3.3) calls this after every save and
+/// on demand via a "Re-validate" button. The command goes through
+/// [`crate::validator::validate_by_id`], which reuses the cached
+/// `parsed_json` rather than re-reading the file off disk - the upsert
+/// layer already validated on write, this is purely for surfaces that
+/// need a fresh outcome without an upsert cycle.
+///
+/// Failure modes are stringified for symmetry with the rest of the
+/// command surface; the failure shape is narrow enough
+/// (`ValidatorError::NotFound` / `Sqlite` / ...) that the React layer
+/// can pattern-match the message text without losing fidelity.
+#[tauri::command]
+pub fn validate_component(
+    state: State<'_, Arc<IndexHandle>>,
+    id: String,
+) -> Result<crate::validator::ValidationOutcome, String> {
+    crate::validator::validate_by_id(state.inner().as_ref(), &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -176,6 +281,57 @@ pub fn get_component_inner(
             })?;
         Ok(row)
     })
+}
+
+/// Pure-function counterpart to [`read_component_raw`].
+///
+/// Looks up the component path in the index, reads the file off disk,
+/// and returns the UTF-8 text. The cap matches the parser's
+/// [`crate::parser::MAX_PARSE_SIZE`] - bigger files are rejected with
+/// `IpcError::PayloadTooLarge` so the editor never opens partial
+/// content. Missing ids yield `IpcError::NotFound`.
+pub fn read_component_raw_inner(handle: &IndexHandle, id: &str) -> Result<String, IpcError> {
+    let path: Option<String> = handle
+        .read(|conn| {
+            let lookup = conn
+                .query_row(
+                    "SELECT path FROM component WHERE id = ?1",
+                    params![id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(Some)
+                .or_else(|err| match err {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                })?;
+            Ok(lookup)
+        })
+        .map_err(|err| IpcError::Index {
+            message: err.to_string(),
+        })?;
+
+    let Some(path) = path else {
+        return Err(IpcError::NotFound { id: id.to_owned() });
+    };
+
+    // Stat first so we can refuse oversized files before reading their
+    // contents into RAM. The Tauri IPC channel serialises the entire
+    // payload, so a multi-MB read both wastes memory and stalls the UI.
+    let meta = std::fs::metadata(&path).map_err(|err| IpcError::Io {
+        message: format!("stat {path}: {err}"),
+    })?;
+    let size = meta.len();
+    if size > READ_RAW_HARD_LIMIT {
+        return Err(IpcError::PayloadTooLarge {
+            size,
+            cap: READ_RAW_HARD_LIMIT,
+        });
+    }
+
+    let bytes = std::fs::read(&path).map_err(|err| IpcError::Io {
+        message: format!("read {path}: {err}"),
+    })?;
+    String::from_utf8(bytes).map_err(|_| IpcError::InvalidUtf8)
 }
 
 /// Run an FTS5 query and return ranked matches with snippets.
@@ -292,6 +448,331 @@ pub fn health_summary_inner(handle: &IndexHandle) -> crate::index::Result<Health
             total_components,
             total_parse_errors,
             by_tool_kind,
+        })
+    })
+}
+
+// ─── Phase 7.3 inner functions ──────────────────────────────────────────
+
+/// Parse the on-disk severity column back into `Severity`. Unknown
+/// values are mapped to `Severity::Low` so a malformed row can't poison
+/// a list response - the row still surfaces, just at the lowest bucket.
+fn parse_severity(s: &str) -> Severity {
+    match s {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "medium" => Severity::Medium,
+        _ => Severity::Low,
+    }
+}
+
+/// Parse the on-disk category column back into `Category`. Unknown
+/// values fall back to `Category::Secret` so future rows added by a
+/// newer build still render rather than disappearing - the worst case
+/// is a slightly mis-labelled row in the Security view.
+fn parse_security_category(s: &str) -> SecurityCategory {
+    match s {
+        "mcp-permission" => SecurityCategory::McpPermission,
+        _ => SecurityCategory::Secret,
+    }
+}
+
+/// Order severity strings DESC so SQL `ORDER BY` puts critical first.
+/// `SQLite` has no native enum ordering; we synthesise a `CASE`
+/// expression that maps each label to its `Severity::rank()` value.
+const SEVERITY_RANK_CASE: &str =
+    "CASE severity WHEN 'critical' THEN 3 WHEN 'high' THEN 2 WHEN 'medium' THEN 1 ELSE 0 END";
+
+#[must_use]
+fn now_unix_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// Implementation for `list_security_findings`.
+///
+/// Joins `security_finding` against `component` so the UI can render
+/// the row's owning component without a second IPC hop. Filters
+/// (`component_id`, `severity`, `category`, `suppressed`) build a
+/// dynamic WHERE clause; pagination follows the same conventions as
+/// `list_components`.
+pub fn list_security_findings_inner(
+    handle: &IndexHandle,
+    filter: &SecurityFilter,
+) -> crate::index::Result<Vec<FindingSummary>> {
+    let limit = filter
+        .limit
+        .unwrap_or(LIST_FINDINGS_DEFAULT_LIMIT)
+        .min(LIST_FINDINGS_HARD_LIMIT);
+    let offset = filter.offset.unwrap_or(0);
+
+    let mut sql = String::from(
+        "SELECT f.id, f.component_id, c.name, c.path, f.category, f.pattern,
+                f.severity, f.source_label, f.redacted_preview, f.detected_at,
+                f.suppressed
+         FROM security_finding f
+         INNER JOIN component c ON c.id = f.component_id
+         WHERE 1=1",
+    );
+
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(component_id) = &filter.component_id {
+        sql.push_str(" AND f.component_id = ?");
+        params_vec.push(Box::new(component_id.clone()));
+    }
+    if let Some(severity) = filter.severity {
+        sql.push_str(" AND f.severity = ?");
+        params_vec.push(Box::new(severity.as_str().to_owned()));
+    }
+    if let Some(category) = filter.category {
+        sql.push_str(" AND f.category = ?");
+        params_vec.push(Box::new(category.as_str().to_owned()));
+    }
+    if let Some(suppressed) = filter.suppressed {
+        sql.push_str(" AND f.suppressed = ?");
+        params_vec.push(Box::new(i64::from(suppressed)));
+    }
+
+    sql.push_str(" ORDER BY ");
+    sql.push_str(SEVERITY_RANK_CASE);
+    sql.push_str(" DESC, f.detected_at DESC LIMIT ? OFFSET ?");
+    params_vec.push(Box::new(i64::from(limit)));
+    params_vec.push(Box::new(i64::from(offset)));
+
+    handle.read(|conn| {
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let suppressed_int: i64 = row.get(10)?;
+            Ok(FindingSummary {
+                id: row.get(0)?,
+                component_id: row.get(1)?,
+                component_name: row.get(2)?,
+                component_path: row.get(3)?,
+                category: parse_security_category(&row.get::<_, String>(4)?),
+                pattern: row.get(5)?,
+                severity: parse_severity(&row.get::<_, String>(6)?),
+                source_label: row.get(7)?,
+                redacted_preview: row.get(8)?,
+                detected_at: row.get(9)?,
+                suppressed: suppressed_int != 0,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    })
+}
+
+/// Implementation for `suppress_finding`. Uses an explicit `now_ms`
+/// rather than `SystemTime::now()` directly so tests can pin time.
+pub fn suppress_finding_inner(
+    handle: &IndexHandle,
+    component_id: &str,
+    pattern: &str,
+    reason: Option<&str>,
+    ttl_days: Option<u32>,
+    now_ms: i64,
+) -> crate::index::Result<()> {
+    let suppress_until: Option<i64> = ttl_days.map(|days| {
+        // Multiply with i64 widths to prevent silent overflow when the
+        // caller sends a huge TTL. `saturating_*` keeps the upper bound
+        // at i64::MAX rather than wrapping.
+        let day_ms: i64 = 86_400_000;
+        let delta = i64::from(days).saturating_mul(day_ms);
+        now_ms.saturating_add(delta)
+    });
+
+    handle.write(|conn| {
+        // Upsert into the suppression table - existing entry's reason and
+        // suppressed_at are refreshed.
+        conn.execute(
+            "INSERT INTO security_finding_suppression (component_id, pattern, suppressed_at, reason)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(component_id, pattern) DO UPDATE SET
+               suppressed_at = excluded.suppressed_at,
+               reason = excluded.reason",
+            params![component_id, pattern, now_ms, reason],
+        )?;
+        // Flip the `suppressed` flag on every matching finding row so
+        // the Security view's "suppressed" filter sees them immediately.
+        // We also stash the reason and the suppress-until timestamp so a
+        // restart picks them back up without consulting the suppression
+        // table.
+        conn.execute(
+            "UPDATE security_finding
+             SET suppressed = 1,
+                 suppress_reason = ?3,
+                 suppress_until = ?4
+             WHERE component_id = ?1 AND pattern = ?2",
+            params![component_id, pattern, reason, suppress_until],
+        )?;
+        Ok(())
+    })
+}
+
+/// Implementation for `unsuppress_finding`. Drops the suppression row
+/// and clears the matching findings' `suppressed` / `suppress_*`
+/// columns so the active findings re-surface.
+pub fn unsuppress_finding_inner(
+    handle: &IndexHandle,
+    component_id: &str,
+    pattern: &str,
+) -> crate::index::Result<()> {
+    handle.write(|conn| {
+        conn.execute(
+            "DELETE FROM security_finding_suppression
+             WHERE component_id = ?1 AND pattern = ?2",
+            params![component_id, pattern],
+        )?;
+        conn.execute(
+            "UPDATE security_finding
+             SET suppressed = 0,
+                 suppress_reason = NULL,
+                 suppress_until = NULL
+             WHERE component_id = ?1 AND pattern = ?2",
+            params![component_id, pattern],
+        )?;
+        Ok(())
+    })
+}
+
+/// Implementation for `get_findings_count_per_component`. One GROUP BY
+/// pass per component, with a per-severity sub-aggregation so the UI
+/// can pick the badge colour without a second round-trip.
+pub fn findings_count_per_component_inner(
+    handle: &IndexHandle,
+) -> crate::index::Result<Vec<ComponentFindingsCount>> {
+    handle.read(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT component_id, severity, COUNT(*)
+             FROM security_finding
+             WHERE suppressed = 0
+             GROUP BY component_id, severity",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let component_id: String = row.get(0)?;
+            let severity_str: String = row.get(1)?;
+            let count: i64 = row.get(2)?;
+            Ok((component_id, severity_str, count))
+        })?;
+
+        // Build per-component map. We resolve to `Vec` ordered by
+        // component_id ASC so the response is deterministic - tests can
+        // assert on indices, and clients that render the same data need
+        // not re-sort.
+        let mut by_id: std::collections::BTreeMap<String, SeverityCounts> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            let (component_id, severity_str, count) = row?;
+            let entry = by_id.entry(component_id).or_default();
+            let count_u32 = u32::try_from(count).unwrap_or(u32::MAX);
+            match parse_severity(&severity_str) {
+                Severity::Low => entry.low = entry.low.saturating_add(count_u32),
+                Severity::Medium => entry.medium = entry.medium.saturating_add(count_u32),
+                Severity::High => entry.high = entry.high.saturating_add(count_u32),
+                Severity::Critical => entry.critical = entry.critical.saturating_add(count_u32),
+            }
+        }
+
+        let mut out = Vec::with_capacity(by_id.len());
+        for (component_id, by_severity) in by_id {
+            let total = by_severity
+                .low
+                .saturating_add(by_severity.medium)
+                .saturating_add(by_severity.high)
+                .saturating_add(by_severity.critical);
+            out.push(ComponentFindingsCount {
+                component_id,
+                total,
+                by_severity,
+            });
+        }
+        Ok(out)
+    })
+}
+
+/// Implementation for `get_security_summary`. Drives the Sidebar Health
+/// group's "Security issues" entry + the Security view header.
+pub fn security_summary_inner(handle: &IndexHandle) -> crate::index::Result<SecuritySummary> {
+    handle.read(|conn| {
+        let mut by_severity = SeverityCounts::default();
+        let mut by_category = SecurityCategoryCounts::default();
+        let mut total: u32 = 0;
+        let suppressed: u32;
+
+        // Severity aggregation - ignores suppressed rows because
+        // suppressed counts are surfaced separately.
+        {
+            let mut stmt = conn.prepare(
+                "SELECT severity, COUNT(*) FROM security_finding
+                 WHERE suppressed = 0 GROUP BY severity",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let severity: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((severity, count))
+            })?;
+            for row in rows {
+                let (severity_str, count) = row?;
+                let n = u32::try_from(count).unwrap_or(u32::MAX);
+                total = total.saturating_add(n);
+                match parse_severity(&severity_str) {
+                    Severity::Low => by_severity.low = by_severity.low.saturating_add(n),
+                    Severity::Medium => by_severity.medium = by_severity.medium.saturating_add(n),
+                    Severity::High => by_severity.high = by_severity.high.saturating_add(n),
+                    Severity::Critical => {
+                        by_severity.critical = by_severity.critical.saturating_add(n);
+                    }
+                }
+            }
+        }
+
+        // Category aggregation - same exclusion rule.
+        {
+            let mut stmt = conn.prepare(
+                "SELECT category, COUNT(*) FROM security_finding
+                 WHERE suppressed = 0 GROUP BY category",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let category: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((category, count))
+            })?;
+            for row in rows {
+                let (category_str, count) = row?;
+                let n = u32::try_from(count).unwrap_or(u32::MAX);
+                match parse_security_category(&category_str) {
+                    SecurityCategory::Secret => {
+                        by_category.secret = by_category.secret.saturating_add(n);
+                    }
+                    SecurityCategory::McpPermission => {
+                        by_category.mcp_permission = by_category.mcp_permission.saturating_add(n);
+                    }
+                }
+            }
+        }
+
+        // Suppressed count - separate query so the totals stay clean.
+        {
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM security_finding WHERE suppressed = 1",
+                [],
+                |row| row.get(0),
+            )?;
+            suppressed = u32::try_from(n).unwrap_or(u32::MAX);
+        }
+
+        Ok(SecuritySummary {
+            total,
+            by_severity,
+            by_category,
+            suppressed,
         })
     })
 }
@@ -554,5 +1035,474 @@ mod tests {
         // Embedded double quote becomes `""`.
         assert_eq!(sanitize_fts_query("a\"b"), "\"a\"\"b\"");
         assert_eq!(sanitize_fts_query("   "), "");
+    }
+
+    #[test]
+    fn read_component_raw_returns_file_text() {
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_skill(&handle, home.path(), "spec", "the spec body\n");
+
+        let raw =
+            read_component_raw_inner(&handle, "aseye://claude-code/user/skill/spec").expect("read");
+        // The seeded SKILL.md carries frontmatter then the body the
+        // helper passed in - both round-trip through the on-disk read.
+        assert!(raw.contains("name: spec"));
+        assert!(raw.contains("the spec body"));
+    }
+
+    #[test]
+    fn read_component_raw_rejects_missing_id() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let err = read_component_raw_inner(&handle, "aseye://nope/x/y/z")
+            .expect_err("missing id must error");
+        assert!(matches!(err, IpcError::NotFound { .. }));
+    }
+
+    #[test]
+    fn read_component_raw_rejects_oversized_files() {
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        // Seed a normal-size component first so the index has a row
+        // we can address by id.
+        seed_skill(&handle, home.path(), "fat", "small\n");
+
+        // Then overwrite the file on disk with > 5 MiB of content. The
+        // index still points to the same path; the read command should
+        // refuse based on the on-disk size, not the cached size.
+        let path = home
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("fat")
+            .join("SKILL.md");
+        let huge = vec![b'a'; usize::try_from(READ_RAW_HARD_LIMIT).expect("cap fits usize") + 1024];
+        fs::write(&path, &huge).expect("inflate");
+
+        let err = read_component_raw_inner(&handle, "aseye://claude-code/user/skill/fat")
+            .expect_err("oversized must error");
+        match err {
+            IpcError::PayloadTooLarge { size, cap } => {
+                assert!(size > READ_RAW_HARD_LIMIT, "size = {size}");
+                assert_eq!(cap, READ_RAW_HARD_LIMIT);
+            }
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+    }
+
+    // ─── Phase 7.3 - security IPC tests ─────────────────────────────────
+
+    /// Seed a finding row directly into the index. Bypasses
+    /// `persist_findings` so a test can stage a precise mix of severity
+    /// / category / suppression states without driving the scanner.
+    ///
+    /// The component row is created on demand if it doesn't exist.
+    #[allow(clippy::too_many_arguments)]
+    fn seed_finding(
+        handle: &IndexHandle,
+        component_id: &str,
+        component_name: &str,
+        component_path: &str,
+        finding_id: &str,
+        category: SecurityCategory,
+        pattern: &str,
+        severity: Severity,
+        detected_at: i64,
+        suppressed: bool,
+    ) {
+        handle
+            .write(|c| {
+                // Idempotently insert the owning component row.
+                c.execute(
+                    "INSERT OR IGNORE INTO component (
+                        id, type, tool, scope, origin, name, path, format,
+                        hash, updated_at
+                     ) VALUES (?1, 'settings', 'claude-code', 'user',
+                              'userCreated', ?2, ?3, 'json', 'h', 0)",
+                    params![component_id, component_name, component_path],
+                )?;
+                c.execute(
+                    "INSERT INTO security_finding (
+                        id, component_id, category, pattern, severity,
+                        file_path, line, source_label, redacted_preview,
+                        detected_at, suppressed, suppress_reason,
+                        suppress_until, evidence_json
+                     ) VALUES (
+                        ?1, ?2, ?3, ?4, ?5, ?6, NULL, 'body', 'abcd…wxyz',
+                        ?7, ?8, NULL, NULL, NULL
+                     )",
+                    params![
+                        finding_id,
+                        component_id,
+                        category.as_str(),
+                        pattern,
+                        severity.as_str(),
+                        component_path,
+                        detected_at,
+                        i64::from(suppressed),
+                    ],
+                )?;
+                Ok(())
+            })
+            .expect("seed finding");
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn list_security_findings_filters_and_sorts() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-1",
+            SecurityCategory::Secret,
+            "anthropic-key",
+            Severity::Critical,
+            300,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-2",
+            SecurityCategory::Secret,
+            "openai-key",
+            Severity::High,
+            200,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c2",
+            "c2",
+            "/tmp/c2",
+            "f-3",
+            SecurityCategory::McpPermission,
+            "postgres-mcp-write",
+            Severity::Medium,
+            100,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c3",
+            "c3",
+            "/tmp/c3",
+            "f-4",
+            SecurityCategory::Secret,
+            "generic-secret",
+            Severity::Low,
+            50,
+            true,
+        );
+
+        // Default filter: all four findings, severity DESC then
+        // detected_at DESC.
+        let all = list_security_findings_inner(&handle, &SecurityFilter::default()).unwrap();
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[0].pattern, "anthropic-key");
+        assert_eq!(all[0].severity, Severity::Critical);
+        assert_eq!(all[1].pattern, "openai-key");
+
+        // Severity filter.
+        let high_only = list_security_findings_inner(
+            &handle,
+            &SecurityFilter {
+                severity: Some(Severity::High),
+                ..SecurityFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(high_only.len(), 1);
+        assert_eq!(high_only[0].pattern, "openai-key");
+
+        // Category filter.
+        let mcp_only = list_security_findings_inner(
+            &handle,
+            &SecurityFilter {
+                category: Some(SecurityCategory::McpPermission),
+                ..SecurityFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(mcp_only.len(), 1);
+        assert_eq!(mcp_only[0].pattern, "postgres-mcp-write");
+
+        // Component filter.
+        let only_c1 = list_security_findings_inner(
+            &handle,
+            &SecurityFilter {
+                component_id: Some("aseye://t/c1".to_owned()),
+                ..SecurityFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(only_c1.len(), 2);
+
+        // Suppressed-only.
+        let suppressed_only = list_security_findings_inner(
+            &handle,
+            &SecurityFilter {
+                suppressed: Some(true),
+                ..SecurityFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(suppressed_only.len(), 1);
+        assert_eq!(suppressed_only[0].pattern, "generic-secret");
+        assert!(suppressed_only[0].suppressed);
+
+        // Active-only.
+        let active_only = list_security_findings_inner(
+            &handle,
+            &SecurityFilter {
+                suppressed: Some(false),
+                ..SecurityFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(active_only.len(), 3);
+    }
+
+    #[test]
+    fn suppress_finding_flips_active_rows_and_persists_until() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-1",
+            SecurityCategory::Secret,
+            "anthropic-key",
+            Severity::Critical,
+            0,
+            false,
+        );
+
+        let now_ms: i64 = 1_000_000;
+        suppress_finding_inner(
+            &handle,
+            "aseye://t/c1",
+            "anthropic-key",
+            Some("ack"),
+            Some(30),
+            now_ms,
+        )
+        .expect("suppress");
+
+        // Suppression row exists.
+        let count: i64 = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM security_finding_suppression
+                     WHERE component_id = ?1 AND pattern = ?2",
+                    params!["aseye://t/c1", "anthropic-key"],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Finding row's suppressed flag flipped to 1; suppress_until
+        // matches now + 30 days in ms.
+        let (flag, until): (i64, Option<i64>) = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT suppressed, suppress_until FROM security_finding
+                     WHERE id = 'f-1'",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(flag, 1);
+        let expected_until = now_ms + 30 * 86_400_000;
+        assert_eq!(until, Some(expected_until));
+
+        // Re-suppress with no TTL clears suppress_until back to NULL.
+        suppress_finding_inner(
+            &handle,
+            "aseye://t/c1",
+            "anthropic-key",
+            Some("perma"),
+            None,
+            now_ms,
+        )
+        .expect("re-suppress");
+        let until2: Option<i64> = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT suppress_until FROM security_finding WHERE id = 'f-1'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(until2, None);
+    }
+
+    #[test]
+    fn unsuppress_finding_removes_row_and_clears_flag() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-1",
+            SecurityCategory::Secret,
+            "anthropic-key",
+            Severity::Critical,
+            0,
+            false,
+        );
+        suppress_finding_inner(&handle, "aseye://t/c1", "anthropic-key", None, None, 0)
+            .expect("suppress");
+        unsuppress_finding_inner(&handle, "aseye://t/c1", "anthropic-key").expect("unsuppress");
+
+        let supp_count: i64 = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM security_finding_suppression",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(supp_count, 0);
+        let flag: i64 = handle
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT suppressed FROM security_finding WHERE id = 'f-1'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(flag, 0);
+    }
+
+    #[test]
+    fn findings_count_per_component_aggregates_severity() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-1",
+            SecurityCategory::Secret,
+            "anthropic-key",
+            Severity::Critical,
+            0,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-2",
+            SecurityCategory::Secret,
+            "openai-key",
+            Severity::High,
+            0,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c2",
+            "c2",
+            "/tmp/c2",
+            "f-3",
+            SecurityCategory::Secret,
+            "generic-secret",
+            Severity::Medium,
+            0,
+            false,
+        );
+        // Suppressed row must NOT contribute to the per-component count.
+        seed_finding(
+            &handle,
+            "aseye://t/c2",
+            "c2",
+            "/tmp/c2",
+            "f-4",
+            SecurityCategory::Secret,
+            "low-secret",
+            Severity::Low,
+            0,
+            true,
+        );
+
+        let counts = findings_count_per_component_inner(&handle).unwrap();
+        assert_eq!(counts.len(), 2);
+        let c1 = &counts[0];
+        assert_eq!(c1.component_id, "aseye://t/c1");
+        assert_eq!(c1.total, 2);
+        assert_eq!(c1.by_severity.critical, 1);
+        assert_eq!(c1.by_severity.high, 1);
+        let c2 = &counts[1];
+        assert_eq!(c2.total, 1);
+        assert_eq!(c2.by_severity.medium, 1);
+        assert_eq!(c2.by_severity.low, 0);
+    }
+
+    #[test]
+    fn security_summary_aggregates_active_and_suppressed() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_finding(
+            &handle,
+            "aseye://t/c1",
+            "c1",
+            "/tmp/c1",
+            "f-1",
+            SecurityCategory::Secret,
+            "anthropic-key",
+            Severity::Critical,
+            0,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c2",
+            "c2",
+            "/tmp/c2",
+            "f-2",
+            SecurityCategory::McpPermission,
+            "postgres-mcp-write",
+            Severity::High,
+            0,
+            false,
+        );
+        seed_finding(
+            &handle,
+            "aseye://t/c3",
+            "c3",
+            "/tmp/c3",
+            "f-3",
+            SecurityCategory::Secret,
+            "low-secret",
+            Severity::Low,
+            0,
+            true,
+        );
+
+        let summary = security_summary_inner(&handle).unwrap();
+        assert_eq!(
+            summary.total, 2,
+            "suppressed row should not count toward total"
+        );
+        assert_eq!(summary.by_severity.critical, 1);
+        assert_eq!(summary.by_severity.high, 1);
+        assert_eq!(summary.by_severity.low, 0);
+        assert_eq!(summary.by_category.secret, 1);
+        assert_eq!(summary.by_category.mcp_permission, 1);
+        assert_eq!(summary.suppressed, 1);
     }
 }

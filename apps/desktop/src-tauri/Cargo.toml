@@ -112,12 +112,50 @@ url = "2"
 # direct dependency auditable rather than implicit.
 regex = "1"
 
+# Phase 3.2: per-tool JSON schema validator. `jsonschema` is the
+# established Rust JSON Schema validator, actively maintained, and the
+# only crate in the ecosystem with a stable error/keyword surface plus
+# JSON pointer paths. Compilation is done once per (tool,
+# component_type) tuple via `OnceLock` so the upsert hot path only
+# pays the validation cost. v0.18 is the stable line that pairs with
+# serde_json 1.x without pulling in async runtime features. The
+# `draft202012` feature opts in to Draft 2020-12 support; without it
+# the `Draft::Draft202012` variant is gated out via cfg.
+jsonschema = { version = "0.18", features = ["draft202012"] }
+
 [dev-dependencies]
 tempfile = "3"
 # `proptest` powers the round-trip property tests for the parser layer:
 # parse(emit(value)) == value (structurally). Dev-only.
 proptest = "1"
+# Phase 5.2 - criterion micro-benchmarks for the parser dispatch and
+# path classifier. Only invoked via `cargo bench`; gated behind
+# `harness = false` on each `[[bench]]` so the benches do NOT run
+# during `cargo test` (criterion's harness collides with the default
+# test harness and would slow CI substantially otherwise). The
+# `cargo_bench_support` feature is what wires criterion into the
+# `cargo bench` driver; we opt out of the default `rayon`-backed
+# parallel sampler to keep the dep graph small and the wall-clock
+# numbers comparable across runners that pin themselves to a single
+# core.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Phase 5.2 - performance regression gates.
+# Both benches read crate-public surface only (`parse_bytes`,
+# `registry_classify_path`, ...) so they remain stable against
+# internal refactors. `harness = false` is mandatory: without it,
+# rustc would inject the default libtest harness and criterion's
+# `criterion_main!` would not register, breaking the bench binary.
+# Explicit invocation: `cargo bench --bench parser_bench` /
+# `cargo bench --bench classify_bench` from `apps/desktop/src-tauri/`.
+[[bench]]
+name = "parser_bench"
+harness = false
+
+[[bench]]
+name = "classify_bench"
+harness = false

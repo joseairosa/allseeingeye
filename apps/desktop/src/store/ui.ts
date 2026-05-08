@@ -1,6 +1,12 @@
 import { create } from "zustand";
 
-export type ViewId = "inventory" | "map" | "editor" | "health" | "settings";
+export type ViewId =
+  | "inventory"
+  | "map"
+  | "editor"
+  | "health"
+  | "security"
+  | "settings";
 export type Density = "comfortable" | "compact";
 /**
  * `system` defers to `prefers-color-scheme`; `dark` and `light` force.

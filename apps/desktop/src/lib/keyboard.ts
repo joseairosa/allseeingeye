@@ -4,11 +4,11 @@ import { useUi } from "@/store/ui";
 /**
  * Global keyboard map.
  * Mirrors `design/app.js` shortcuts and the table in `docs/06-ux-design.md`:
- *   ⌘K            command palette
- *   ⌘1 / ⌘2 / ⌘3  inventory / map / editor / health
- *   ⌘,            settings view
- *   ⌘⇧.           panic mode toggle (instant secret mask)
- *   Esc           close palette / onboarding / quick look
+ *   ⌘K              command palette
+ *   ⌘1 / ⌘2 / ⌘3 / ⌘4 / ⌘5  inventory / map / editor / health / security
+ *   ⌘,              settings view
+ *   ⌘⇧.             panic mode toggle (instant secret mask)
+ *   Esc             close palette / onboarding / quick look
  */
 export function useGlobalKeyboard(): void {
   const togglePalette = useUi((s) => s.togglePalette);
@@ -43,15 +43,16 @@ export function useGlobalKeyboard(): void {
         return;
       }
 
-      if (mod && ["1", "2", "3", "4"].includes(event.key)) {
+      if (mod && ["1", "2", "3", "4", "5"].includes(event.key)) {
         event.preventDefault();
         const map = {
           "1": "inventory",
           "2": "map",
           "3": "editor",
           "4": "health",
+          "5": "security",
         } as const;
-        setView(map[event.key as "1" | "2" | "3" | "4"]);
+        setView(map[event.key as "1" | "2" | "3" | "4" | "5"]);
         return;
       }
 

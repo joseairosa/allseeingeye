@@ -9,6 +9,51 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::registry::types::{ComponentType, Format, Scope, ToolId};
+use crate::security::{Category as SecurityCategory, Severity};
+
+/// Strongly-typed IPC error returned by commands that need to discriminate
+/// failure modes (rather than collapsing everything to a `String`). The
+/// React layer pattern-matches on the `kind` discriminator to render
+/// targeted messaging - "file too large", "id not found", etc.
+///
+/// Phase 3.1 introduces this for `read_component_raw`. Older commands
+/// still return `Result<_, String>`; they will migrate as they grow
+/// failure-mode complexity.
+#[derive(Debug, thiserror::Error, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/IpcError.ts")]
+#[ts(rename_all = "camelCase")]
+pub enum IpcError {
+    /// The supplied component id has no row in the index.
+    #[error("component {id} was not found")]
+    NotFound {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    /// The on-disk file exceeds the parser cap; the editor refuses to
+    /// load multi-megabyte text into Monaco.
+    #[error("payload size {size} exceeds cap {cap}")]
+    PayloadTooLarge {
+        /// Actual size in bytes.
+        size: u64,
+        /// Configured cap in bytes (5 MiB at the moment, matching the
+        /// parser).
+        cap: u64,
+    },
+    /// Reading the file off disk failed (permission denied, EIO, ...).
+    /// The message is rendered verbatim - we don't expose internal paths
+    /// here because the caller already knows the path it requested.
+    #[error("io error: {message}")]
+    Io { message: String },
+    /// File contents were not valid UTF-8. Monaco cannot edit binary
+    /// content; the user is shown a friendlier error than `from_utf8`.
+    #[error("file is not valid UTF-8")]
+    InvalidUtf8,
+    /// Underlying `SQLite` read failed. Surfaced as a fallback when the
+    /// index is in a bad state.
+    #[error("index error: {message}")]
+    Index { message: String },
+}
 
 /// Filter sent by the React UI to `list_components`.
 ///
@@ -129,4 +174,112 @@ pub struct HealthSummary {
     pub total_components: u32,
     pub total_parse_errors: u32,
     pub by_tool_kind: Vec<ToolHealthCount>,
+}
+
+// ─── Phase 7.3 - Security view IPC types ────────────────────────────────
+//
+// These types are scaffolded ahead of the Phase 7.3 commands. They are
+// not yet referenced by any `#[tauri::command]` handler; the
+// `#[allow(dead_code)]` keeps clippy happy until those handlers land.
+
+/// Filter sent by the React UI to `list_security_findings`.
+///
+/// All fields are optional; an empty filter returns the first
+/// `limit` findings sorted by severity DESC, `detected_at` DESC.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/SecurityFilter.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct SecurityFilter {
+    /// Restrict to a single component.
+    pub component_id: Option<String>,
+    pub severity: Option<Severity>,
+    pub category: Option<SecurityCategory>,
+    /// `Some(true)`  -> only suppressed findings;
+    /// `Some(false)` -> only active findings;
+    /// `None`        -> both. The Security view's "Suppressed" tab uses
+    /// the `Some(true)` form.
+    pub suppressed: Option<bool>,
+    /// Page size. Default 200; clamped to 1000 server-side.
+    pub limit: Option<u32>,
+    /// Offset into the result set (default 0).
+    pub offset: Option<u32>,
+}
+
+/// One row returned by `list_security_findings`. The shape pre-joins
+/// the owning component's name and path so the UI doesn't have to
+/// chase a second IPC call per row.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/FindingSummary.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct FindingSummary {
+    pub id: String,
+    pub component_id: String,
+    pub component_name: String,
+    pub component_path: String,
+    pub category: SecurityCategory,
+    pub pattern: String,
+    pub severity: Severity,
+    pub source_label: String,
+    pub redacted_preview: String,
+    pub detected_at: i64,
+    pub suppressed: bool,
+}
+
+/// Per-severity finding counts, used by the inventory shield badge to
+/// pick the highest-severity colour without a second round-trip.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/SeverityCounts.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct SeverityCounts {
+    pub low: u32,
+    pub medium: u32,
+    pub high: u32,
+    pub critical: u32,
+}
+
+/// One row returned by `get_findings_count_per_component`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/ComponentFindingsCount.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct ComponentFindingsCount {
+    pub component_id: String,
+    pub total: u32,
+    pub by_severity: SeverityCounts,
+}
+
+/// Per-category counts. `Default` keeps newly-added categories at zero
+/// so a future variant doesn't break wire compat - the field shape can
+/// grow without bumping a schema version.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/SecurityCategoryCounts.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct SecurityCategoryCounts {
+    pub secret: u32,
+    pub mcp_permission: u32,
+}
+
+/// Aggregate counts surfaced by `get_security_summary`.
+///
+/// Drives the Sidebar Health group's "Security issues" entry +
+/// the Security view header.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/SecuritySummary.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct SecuritySummary {
+    pub total: u32,
+    pub by_severity: SeverityCounts,
+    pub by_category: SecurityCategoryCounts,
+    pub suppressed: u32,
 }

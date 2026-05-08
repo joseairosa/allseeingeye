@@ -1,15 +1,23 @@
 import { memo, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUi } from "@/store/ui";
-import { useComponents } from "@/ipc/hooks";
+import { useComponentFindingsCounts, useComponents } from "@/ipc/hooks";
 import { parseSearchQuery } from "@/lib/parseFilter";
 import { toggleFilterPrefix } from "@/lib/filterChip";
 import { formatRelativeTime } from "@/lib/relativeTime";
-import { FiltersIcon, SearchIcon, TypeIcon, type TypeIconId } from "@/components/icons";
+import {
+  FiltersIcon,
+  SearchIcon,
+  ShieldIcon,
+  TypeIcon,
+  type TypeIconId,
+} from "@/components/icons";
 import type {
+  ComponentFindingsCount,
   ComponentSummary,
   ComponentType,
   Scope,
+  SeverityCounts,
   ToolId,
 } from "@aseye/shared-types";
 
@@ -62,8 +70,25 @@ interface RowProps {
   selected: boolean;
   /** Inline transform produced by the virtualizer for absolute positioning. */
   transform: string;
+  /**
+   * Per-component finding totals. Drives the inline shield badge -
+   * `null` when no findings exist, so the badge stays hidden rather
+   * than rendering an empty shell.
+   */
+  findings: ComponentFindingsCount | null;
   onSelect: (id: string) => void;
   onOpenEditor: () => void;
+}
+
+/**
+ * Pick the highest severity present in a per-component finding count
+ * so the badge picks its colour from the worst offender.
+ */
+function highestSeverity(counts: SeverityCounts): "critical" | "high" | "medium" | "low" {
+  if (counts.critical > 0) return "critical";
+  if (counts.high > 0) return "high";
+  if (counts.medium > 0) return "medium";
+  return "low";
 }
 
 function rowFlags(row: ComponentSummary, selected: boolean): string {
@@ -82,11 +107,15 @@ const Row = memo(function Row({
   row,
   selected,
   transform,
+  findings,
   onSelect,
   onOpenEditor,
 }: RowProps) {
   const className = `component-row virtual ${rowFlags(row, selected)}`.trim();
   const iconId: TypeIconId = TYPE_TO_ICON[row.kind] ?? "icon-skill";
+  const findingsTotal = findings?.total ?? 0;
+  const severity =
+    findingsTotal > 0 && findings ? highestSeverity(findings.bySeverity) : null;
 
   return (
     <button
@@ -103,7 +132,20 @@ const Row = memo(function Row({
         <strong>{row.kind}</strong>
       </span>
       <span role="cell" className="name-cell">
-        <span>{displayLabel(row)}</span>
+        <span className="name-cell-title">
+          <span>{displayLabel(row)}</span>
+          {severity ? (
+            <span
+              className={`shield-badge ${severity}`}
+              aria-label={`${findingsTotal} security findings`}
+              title={`${findingsTotal} ${
+                findingsTotal === 1 ? "finding" : "findings"
+              }`}
+            >
+              <ShieldIcon />
+            </span>
+          ) : null}
+        </span>
         <small>{row.description ?? row.path}</small>
       </span>
       <span role="cell">{TOOL_DISPLAY_NAME[row.tool]}</span>
@@ -183,6 +225,8 @@ interface VirtualBodyProps {
   rows: ComponentSummary[];
   rowHeight: number;
   selectedId: string | null;
+  /** Per-component finding totals indexed by component id. */
+  findingsByComponent: ReadonlyMap<string, ComponentFindingsCount>;
   onSelect: (id: string) => void;
   onOpenEditor: () => void;
 }
@@ -200,6 +244,7 @@ function VirtualBody({
   rows,
   rowHeight,
   selectedId,
+  findingsByComponent,
   onSelect,
   onOpenEditor,
 }: VirtualBodyProps) {
@@ -231,6 +276,7 @@ function VirtualBody({
               row={row}
               selected={row.id === selectedId}
               transform={`translateY(${vItem.start}px)`}
+              findings={findingsByComponent.get(row.id) ?? null}
               onSelect={onSelect}
               onOpenEditor={onOpenEditor}
             />
@@ -252,6 +298,18 @@ export function InventoryView() {
 
   const parsed = useMemo(() => parseSearchQuery(search), [search]);
   const { data, isPending, isError } = useComponents(parsed.filter);
+  const { data: findingsCounts } = useComponentFindingsCounts();
+
+  // Index findings by component id once per fetch so the virtualised
+  // row render is O(1) per row rather than O(n) per row across N
+  // findings entries.
+  const findingsByComponent = useMemo(() => {
+    const map = new Map<string, ComponentFindingsCount>();
+    for (const entry of findingsCounts ?? []) {
+      map.set(entry.componentId, entry);
+    }
+    return map;
+  }, [findingsCounts]);
 
   const isActive = view === "inventory";
   const chips = chipStates(
@@ -348,6 +406,7 @@ export function InventoryView() {
             rows={rows}
             rowHeight={rowHeight}
             selectedId={selectedId}
+            findingsByComponent={findingsByComponent}
             onSelect={selectComponent}
             onOpenEditor={handleOpenEditor}
           />

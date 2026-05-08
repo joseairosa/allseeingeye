@@ -12,6 +12,7 @@ import { InventoryView } from "@/views/InventoryView";
 import { MapView } from "@/views/MapView";
 import { EditorView } from "@/views/EditorView";
 import { HealthView } from "@/views/HealthView";
+import { SecurityView } from "@/views/SecurityView";
 import { SettingsView } from "@/views/SettingsView";
 import { useHealthSummary, usePipelineEventInvalidator } from "@/ipc/hooks";
 import { useDiagnosticsRing } from "@/lib/diagnosticsRing";
@@ -129,6 +130,7 @@ export function App() {
         <MapView />
         <EditorView />
         <HealthView />
+        <SecurityView />
         <SettingsView />
         <Statusbar resultCount={totalComponents} />
       </main>

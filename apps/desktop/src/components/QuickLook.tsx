@@ -1,8 +1,23 @@
 import { useUi } from "@/store/ui";
-import { useComponent } from "@/ipc/hooks";
+import {
+  useComponent,
+  useFindingsForComponent,
+  useSuppressFinding,
+} from "@/ipc/hooks";
 import { formatRelativeTime } from "@/lib/relativeTime";
-import type { ComponentDetail, ToolId } from "@aseye/shared-types";
-import { CloseIcon, NavEditorIcon, PinIcon, TagIcon } from "./icons";
+import type {
+  ComponentDetail,
+  FindingSummary,
+  ToolId,
+} from "@aseye/shared-types";
+import { RedactedPreview } from "./RedactedPreview";
+import {
+  CloseIcon,
+  NavEditorIcon,
+  PinIcon,
+  ShieldIcon,
+  TagIcon,
+} from "./icons";
 
 const TOOL_DISPLAY_NAME: Record<ToolId, string> = {
   "claude-code": "Claude Code",
@@ -63,7 +78,77 @@ function Body({ detail }: BodyProps) {
           <p className="mono">{detail.parseErrors}</p>
         </section>
       ) : null}
+      <SecuritySection componentId={detail.id} />
     </>
+  );
+}
+
+interface SecuritySectionProps {
+  componentId: string;
+}
+
+/**
+ * Phase 7.3 - Quick Look's per-component findings list. Hidden when the
+ * component has zero findings so the panel doesn't grow a permanent
+ * empty section. Each finding offers an inline suppress action; the
+ * mutation invalidates the security caches via `useSuppressFinding`.
+ */
+function SecuritySection({ componentId }: SecuritySectionProps) {
+  const { data } = useFindingsForComponent(componentId);
+  const suppressMut = useSuppressFinding();
+  const findings = data ?? [];
+  if (findings.length === 0) return null;
+  return (
+    <section className="quick-section quick-security" aria-labelledby="quick-security-heading">
+      <h3 id="quick-security-heading">Security</h3>
+      {findings.map((f) => (
+        <SecurityRow
+          key={f.id}
+          finding={f}
+          onSuppress={() =>
+            suppressMut.mutate({
+              componentId: f.componentId,
+              pattern: f.pattern,
+            })
+          }
+        />
+      ))}
+    </section>
+  );
+}
+
+interface SecurityRowProps {
+  finding: FindingSummary;
+  onSuppress: () => void;
+}
+
+function SecurityRow({ finding, onSuppress }: SecurityRowProps) {
+  return (
+    <div className="quick-security-row">
+      <div className="quick-security-head">
+        <span className={`shield-badge ${finding.severity}`} aria-hidden="true">
+          <ShieldIcon />
+        </span>
+        <span className="mono quick-security-pattern">{finding.pattern}</span>
+        <span className="quick-security-severity">{finding.severity}</span>
+      </div>
+      <div className="quick-security-meta">
+        <RedactedPreview
+          value={finding.redactedPreview}
+          label={`secret preview for ${finding.pattern}`}
+        />
+        <span className="mono quick-security-source">{finding.sourceLabel}</span>
+      </div>
+      {!finding.suppressed ? (
+        <button
+          type="button"
+          className="text-button quiet"
+          onClick={onSuppress}
+        >
+          suppress
+        </button>
+      ) : null}
+    </div>
   );
 }
 

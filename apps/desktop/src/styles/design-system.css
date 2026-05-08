@@ -1166,6 +1166,25 @@ body.light .map-legend {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Monaco host: fills the right pane below the pane title. The wrapping
+   div has a bounded height so Monaco's `automaticLayout: true` can
+   measure correctly; Monaco renders its own scrollers inside. */
+.editor-monaco-host {
+  height: 100%;
+  min-height: 320px;
+}
+
+/* Editor empty state shown when no component is selected. Scoped class
+   to keep the marketing-grade hero in `docs/06` reachable later. */
+.editor-empty {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
 pre {
   margin: 0;
   overflow: auto;
@@ -1899,6 +1918,299 @@ body.light pre {
   height: 6px;
   border-radius: 50%;
   background: var(--accent-1);
+}
+
+/* Phase 7.3 - Security view + per-component shield badge.
+ *
+ * The badge is the single visual primitive shared across the Inventory
+ * row, the Quick Look section header, and the Security view rows. Its
+ * colour comes from severity-suffixed modifier classes that re-use the
+ * existing status tokens (`--error`, `--warn`, `--cold`) so the design
+ * system stays the source of truth and no new tokens are introduced.
+ */
+.shield-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: var(--cold);
+  background: rgba(100, 116, 139, 0.12);
+  flex: 0 0 auto;
+}
+
+.shield-badge svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.shield-badge.critical {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.16);
+}
+
+.shield-badge.high {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.09);
+}
+
+.shield-badge.medium {
+  color: var(--warn);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.shield-badge.low {
+  color: var(--cold);
+  background: rgba(100, 116, 139, 0.12);
+}
+
+/* Inventory name cell - keep the row label and the shield badge on
+ * the same baseline. */
+.name-cell-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.name-cell-title > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Security view header pill with embedded count. */
+.security-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.security-pill-count {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.security-pill.selected .security-pill-count {
+  color: var(--text-primary);
+}
+
+/* Security view: per-severity section header. */
+.security-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.security-section-count {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* Security view row. Grid keeps the row dense without nesting another
+ * card layer. */
+.security-row {
+  display: grid;
+  grid-template-columns: 24px 24px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.security-row:hover {
+  border-color: var(--border-strong);
+}
+
+.security-row-select input {
+  cursor: pointer;
+}
+
+.security-row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.security-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.security-row-title strong {
+  color: var(--text-primary);
+}
+
+.security-row-title .mono {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.security-row-path {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.security-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.security-row-category {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.security-row-source {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.security-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Security view empty state - calm shield-check + hint copy. */
+.security-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 12px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.security-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--success);
+  border-radius: 999px;
+  color: var(--success);
+}
+
+.security-empty-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Quick Look Security section - mirrors the row aesthetic from the
+ * Security view but inside the slide-in's narrower column. */
+.quick-security-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.quick-security-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quick-security-pattern {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-security-severity {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quick-security-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-security-source {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* Compact, button-shaped redacted preview. Click reveals; auto-masks
+ * after 5 s (`RedactedPreview`). Panic mode forces masking. */
+.redacted-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.redacted-preview:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.redacted-preview:disabled {
+  cursor: not-allowed;
+  color: var(--text-tertiary);
+}
+
+.redacted-preview[data-panic="true"] {
+  opacity: 0.6;
 }
 
 @media (max-width: 1280px) {
