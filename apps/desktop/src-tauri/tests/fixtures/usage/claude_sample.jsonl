@@ -1,0 +1,7 @@
+{"type":"last-prompt","leafUuid":"abc","sessionId":"sess-A"}
+{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"sess-A"}
+{"type":"system","subtype":"bridge_status","timestamp":"2026-05-08T01:45:12.695Z","cwd":"/Users/joseairosa/Development/allseeingeye","sessionId":"sess-A","version":"2.1.133"}
+{"type":"user","message":{"role":"user","content":"hello"},"cwd":"/Users/joseairosa/Development/allseeingeye","timestamp":"2026-05-08T01:46:00.000Z","sessionId":"sess-A"}
+{"type":"assistant","cwd":"/Users/joseairosa/Development/allseeingeye","timestamp":"2026-05-08T01:47:38.686Z","sessionId":"sess-A","message":{"model":"claude-opus-4-7","usage":{"input_tokens":6,"cache_creation_input_tokens":74204,"cache_read_input_tokens":0,"output_tokens":1005}}}
+{"type":"assistant","cwd":"/Users/joseairosa/Development/allseeingeye","timestamp":"2026-05-08T01:48:10.000Z","sessionId":"sess-A","message":{"model":"claude-opus-4-7","usage":{"input_tokens":6,"cache_creation_input_tokens":80154,"cache_read_input_tokens":0,"output_tokens":327}}}
+{"type":"assistant","cwd":"/Users/joseairosa/Development/allseeingeye","timestamp":"2026-05-09T02:00:00.000Z","sessionId":"sess-A","message":{"model":"claude-sonnet-4-7","usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":50000,"output_tokens":200}}}

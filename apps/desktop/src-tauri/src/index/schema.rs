@@ -221,3 +221,54 @@ CREATE TABLE app_settings (
   value TEXT NOT NULL
 );
 ";
+
+// Phase 14C: Token usage analytics. Stores per-day rollups of assistant
+// turns folded out of Claude Code and Codex JSONL session transcripts.
+// Aggregation is keyed by (tool, project_path, model, day) so re-running
+// the parser is idempotent. The watermark table lets re-scans only
+// consume the bytes appended since the last run, keeping repeat passes
+// O(new bytes) regardless of total history. See docs/14-cost-and-memory.md
+// section 14C for the full rationale.
+
+/// Per-day token usage rollup. One row per
+/// `(tool, project_path, model, day)` tuple.
+pub const CREATE_TOKEN_USAGE: &str = "
+CREATE TABLE token_usage (
+  tool          TEXT NOT NULL,
+  project_path  TEXT NOT NULL,
+  model         TEXT NOT NULL,
+  day           TEXT NOT NULL,
+  sessions      INTEGER NOT NULL,
+  turns         INTEGER NOT NULL,
+  input         INTEGER NOT NULL,
+  output        INTEGER NOT NULL,
+  cache_read    INTEGER NOT NULL,
+  cache_create  INTEGER NOT NULL,
+  est_cost_usd  REAL NOT NULL,
+  refreshed_at  INTEGER NOT NULL,
+  PRIMARY KEY (tool, project_path, model, day)
+);
+";
+
+/// Index covering "rows for the last N days across all projects" - the
+/// access pattern of the Cost view's by-day sparkline.
+pub const CREATE_IDX_TOKEN_USAGE_DAY: &str =
+    "CREATE INDEX idx_token_usage_day ON token_usage(day);";
+
+/// Index covering "rows for one project across all models / days" - the
+/// access pattern of the Cost view's by-project bar chart and the
+/// recommendations engine.
+pub const CREATE_IDX_TOKEN_USAGE_PROJECT: &str =
+    "CREATE INDEX idx_token_usage_project ON token_usage(project_path);";
+
+/// Per-session watermark recording how many bytes of a given session's
+/// JSONL we have already folded into `token_usage`. Re-scans seek to
+/// `bytes_read` and only parse the appended tail.
+pub const CREATE_USAGE_SESSION_WATERMARK: &str = "
+CREATE TABLE usage_session_watermark (
+  tool       TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  bytes_read INTEGER NOT NULL,
+  PRIMARY KEY (tool, session_id)
+);
+";

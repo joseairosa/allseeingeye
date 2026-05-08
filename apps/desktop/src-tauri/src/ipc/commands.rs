@@ -254,6 +254,55 @@ pub async fn start_full_scan(scan_ctx: State<'_, ScanContext>) -> Result<ScanRep
         .map_err(|e| format!("scan task panicked: {e}"))?
 }
 
+// ─── Phase 14C - token usage analytics ─────────────────────────────────
+
+/// Read-side IPC for the Cost view. Dispatches one of four query
+/// shapes against the `token_usage` rollup table. When `refresh = true`
+/// the handler runs an aggregation pass first, so the returned rows
+/// reflect the latest on-disk session transcripts.
+///
+/// The aggregation IO is dispatched via `spawn_blocking` so the Tauri
+/// command runtime never blocks waiting for `SQLite`. Even on the
+/// developer's home (around 3000 session files) the pass should finish
+/// well inside the 5s budget; further-out users may see longer
+/// first-mount times, hence the explicit "refresh" affordance the UI
+/// exposes.
+#[tauri::command]
+pub async fn usage_query(
+    state: State<'_, Arc<IndexHandle>>,
+    kind: crate::usage::CostQuery,
+    refresh: Option<bool>,
+) -> Result<crate::usage::CostResponse, String> {
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if refresh.unwrap_or(false) {
+            crate::usage::refresh(&index).map_err(|e| e.to_string())?;
+        }
+        crate::usage::query::dispatch(&index, kind).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("usage_query task panicked: {e}"))?
+}
+
+/// Imperatively re-run the aggregation pass and return the new
+/// `refreshed_at` epoch (unix seconds). The Cost view calls this on
+/// the user clicking "refresh" and on the 30-min background timer.
+///
+/// This is a separate command from `usage_query` so the UI can drive
+/// the refresh without committing to which view shape it's about to
+/// render next.
+#[tauri::command]
+pub async fn usage_refresh(state: State<'_, Arc<IndexHandle>>) -> Result<i64, String> {
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::usage::refresh(&index)
+            .map(|outcome| outcome.refreshed_at)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("usage_refresh task panicked: {e}"))?
+}
+
 // ─── Pure functions exercised by tests ──────────────────────────────────
 
 /// Fetch a paginated, filtered list of `ComponentSummary` rows.

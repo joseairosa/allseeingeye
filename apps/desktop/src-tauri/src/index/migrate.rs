@@ -67,6 +67,17 @@ const V3_FINDING_EVIDENCE: &[&str] =
 /// `docs/14-cost-and-memory.md` section 14A for the rationale.
 const V4_APP_SETTINGS: &[&str] = &[schema::CREATE_APP_SETTINGS];
 
+/// Phase 14C migration: add the `token_usage` rollup table and the
+/// per-session `usage_session_watermark`. New tables only, no changes
+/// to existing rows. See `docs/14-cost-and-memory.md` section 14C for
+/// the schema rationale.
+const V5_TOKEN_USAGE: &[&str] = &[
+    schema::CREATE_TOKEN_USAGE,
+    schema::CREATE_IDX_TOKEN_USAGE_DAY,
+    schema::CREATE_IDX_TOKEN_USAGE_PROJECT,
+    schema::CREATE_USAGE_SESSION_WATERMARK,
+];
+
 /// Registered migrations. Keep sorted ascending by version. The runner
 /// refuses to open a DB whose stored version is higher than the maximum
 /// here - that means a future build wrote it.
@@ -75,6 +86,7 @@ const MIGRATIONS: &[(u32, &[&str])] = &[
     (2, V2_SECURITY_TABLES),
     (3, V3_FINDING_EVIDENCE),
     (4, V4_APP_SETTINGS),
+    (5, V5_TOKEN_USAGE),
 ];
 
 /// Highest migration version known to this build.
@@ -186,6 +198,8 @@ mod tests {
             "security_finding",
             "security_finding_suppression",
             "app_settings",
+            "token_usage",
+            "usage_session_watermark",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -197,13 +211,15 @@ mod tests {
             assert!(n >= 1, "expected table {table} to exist");
         }
 
-        // Indexes from v1 + v2.
+        // Indexes from v1 + v2 + v5.
         for idx in [
             "idx_component_tool_type",
             "idx_component_mtime",
             "idx_usage_component_ts",
             "idx_finding_component",
             "idx_finding_severity_detected",
+            "idx_token_usage_day",
+            "idx_token_usage_project",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -384,7 +400,9 @@ mod tests {
              FROM security_finding;
              DROP TABLE security_finding;
              ALTER TABLE security_finding_old RENAME TO security_finding;
-             DROP TABLE IF EXISTS app_settings;",
+             DROP TABLE IF EXISTS app_settings;
+             DROP TABLE IF EXISTS token_usage;
+             DROP TABLE IF EXISTS usage_session_watermark;",
         )
         .unwrap();
 

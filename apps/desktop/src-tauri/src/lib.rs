@@ -13,6 +13,7 @@ mod parser;
 mod pipeline;
 mod registry;
 mod security;
+mod usage;
 mod validator;
 mod watcher;
 
@@ -93,6 +94,12 @@ pub use ipc::updates::{
     default_settings_path, spawn_daily_check, UpdateAvailable, UpdateChannel, UpdateError,
     UpdateSettings,
 };
+
+// Phase 14C: re-export the token-usage refresh entry point. The IPC
+// commands consume this through the crate-private `crate::usage::*`
+// path; re-exporting here lets integration tests under `tests/`
+// drive the aggregator end-to-end without standing up a Tauri app.
+pub use usage::{refresh_from_home as usage_refresh_from_home, RefreshOutcome};
 
 use std::sync::Arc;
 
@@ -206,6 +213,9 @@ pub fn run() {
             ipc::updates::set_update_channel,
             ipc::updates::get_auto_check_setting,
             ipc::updates::set_auto_check_setting,
+            // Phase 14C - token usage analytics.
+            ipc::commands::usage_query,
+            ipc::commands::usage_refresh,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
