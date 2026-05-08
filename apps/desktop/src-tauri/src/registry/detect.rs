@@ -73,10 +73,22 @@ pub fn expand_home(path: &str, home: Option<&Path>) -> PathBuf {
         if let Some(home) = home {
             return home.join(rest);
         }
+        // Production callers (Pipeline::start_with_home, full_scan_inner)
+        // pass `None` here to mean "use the real HOME". Without this
+        // fallback we'd hand the walker a literal `~/...` path which no
+        // filesystem glob matches, silently turning every scan into a
+        // no-op. Tools are detected (detect_one resolves HOME itself)
+        // but components never get indexed.
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
     }
     if path == "~" {
         if let Some(home) = home {
             return home.to_path_buf();
+        }
+        if let Some(home) = dirs::home_dir() {
+            return home;
         }
     }
     PathBuf::from(path)
@@ -239,5 +251,30 @@ mod tests {
         let home = PathBuf::from("/tmp/fakehome");
         let resolved = expand_home("/etc/config", Some(&home));
         assert_eq!(resolved, PathBuf::from("/etc/config"));
+    }
+
+    /// Production callers (`Pipeline::start_with_home`,
+    /// `full_scan_inner`) pass `home: None` meaning "use the real $HOME".
+    /// The bug: when this returned a literal `~/...` path the walker
+    /// silently matched zero files. Pin the expected behaviour.
+    #[test]
+    fn expand_home_with_none_falls_back_to_dirs_home() {
+        let resolved = expand_home("~/.claude/skills/foo", None);
+        // The result must NOT begin with `~`; it must be an absolute
+        // path under the OS-reported HOME.
+        let s = resolved.to_string_lossy();
+        assert!(
+            !s.starts_with('~'),
+            "expand_home(_, None) returned `~`-prefixed path: {s}"
+        );
+        let home = dirs::home_dir().expect("test host has a home dir");
+        assert!(
+            resolved.starts_with(&home),
+            "expected {resolved:?} to start with {home:?}"
+        );
+        assert!(
+            resolved.ends_with(".claude/skills/foo"),
+            "expected suffix `.claude/skills/foo`, got {resolved:?}"
+        );
     }
 }
