@@ -16,6 +16,8 @@ pub mod conn;
 pub mod error;
 pub mod migrate;
 pub mod schema;
+#[cfg(test)]
+mod soak;
 pub mod upsert;
 
 use std::path::PathBuf;

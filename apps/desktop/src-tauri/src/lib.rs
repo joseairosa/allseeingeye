@@ -80,8 +80,8 @@ pub use security::{
 // crawling the private module path. Mirrors the security re-export
 // above.
 pub use validator::{
-    validate as validate_component_raw, validate_by_id, ParseErrorKind, ValidationError,
-    ValidationOutcome, ValidationWarning, ValidationWarningKind, ValidatorError,
+    schema_for_tuple, validate as validate_component_raw, validate_by_id, ParseErrorKind,
+    ValidationError, ValidationOutcome, ValidationWarning, ValidationWarningKind, ValidatorError,
 };
 
 // Phase 6.2: re-export the auto-update IPC + settings surface at crate
@@ -196,6 +196,10 @@ pub fn run() {
             ipc::commands::get_security_summary,
             // Phase 3.2 - per-tool schema validation by component id.
             ipc::commands::validate_component,
+            // Phase 3.3 - Editor save flow + bundled schema lookup.
+            ipc::commands::save_component,
+            ipc::commands::get_component_with_raw,
+            ipc::commands::get_validation_schema,
             ipc::updates::check_for_update,
             ipc::updates::install_update_and_relaunch,
             ipc::updates::get_update_channel,

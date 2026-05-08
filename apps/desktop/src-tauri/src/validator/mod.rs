@@ -265,6 +265,35 @@ fn parsed_component_from_cache(
     })
 }
 
+/// Return the bundled schema string for a `(tool, component_type)`
+/// tuple, or `None` when no schema is bundled.
+///
+/// Phase 3.3 surfaces the raw JSON Schema text to the React form pane
+/// so it can render type-appropriate inputs without round-tripping the
+/// validator. The returned string is parsed once on the JS side and
+/// cached - the React layer never deserialises it back into a Rust
+/// type, so we keep the public surface as a `&'static str`.
+#[must_use]
+pub fn schema_for_tuple(tool: ToolId, component_type: ComponentType) -> Option<&'static str> {
+    match (tool, component_type) {
+        (ToolId::ClaudeCode, ComponentType::Skill) => Some(schemas::SCHEMA_CLAUDE_CODE_SKILL),
+        (ToolId::ClaudeCode, ComponentType::Agent) => Some(schemas::SCHEMA_CLAUDE_CODE_AGENT),
+        (ToolId::ClaudeCode, ComponentType::Command) => Some(schemas::SCHEMA_CLAUDE_CODE_COMMAND),
+        (ToolId::ClaudeCode, ComponentType::Rule) => Some(schemas::SCHEMA_CLAUDE_CODE_RULE),
+        (ToolId::ClaudeCode, ComponentType::Mcp) => Some(schemas::SCHEMA_CLAUDE_CODE_MCP),
+        (ToolId::ClaudeCode, ComponentType::Hook) => Some(schemas::SCHEMA_CLAUDE_CODE_HOOK),
+        (ToolId::ClaudeCode, ComponentType::Settings) => Some(schemas::SCHEMA_CLAUDE_CODE_SETTINGS),
+        (ToolId::Codex, ComponentType::Skill) => Some(schemas::SCHEMA_CODEX_SKILL),
+        (ToolId::Codex, ComponentType::Mcp) => Some(schemas::SCHEMA_CODEX_MCP),
+        (ToolId::Cursor, ComponentType::Rule) => Some(schemas::SCHEMA_CURSOR_RULE),
+        (ToolId::Cursor, ComponentType::Mcp) => Some(schemas::SCHEMA_CURSOR_MCP),
+        (ToolId::Antigravity, ComponentType::Skill) => Some(schemas::SCHEMA_ANTIGRAVITY_SKILL),
+        (ToolId::Antigravity, ComponentType::Rule) => Some(schemas::SCHEMA_ANTIGRAVITY_RULE),
+        (ToolId::Antigravity, ComponentType::Command) => Some(schemas::SCHEMA_ANTIGRAVITY_WORKFLOW),
+        _ => None,
+    }
+}
+
 /// Map the on-wire `(tool, type)` strings stored in `component.tool`
 /// and `component.type` back to their enums. The mapping mirrors the
 /// `serde(rename_all = ...)` attributes on the enums.

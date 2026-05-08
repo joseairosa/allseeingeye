@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Weekly Monday 06:00 UTC - runs the long-form soak suite that's
+    # too expensive for every PR. Matches the cadence noted in
+    # apps/desktop/tests/README.md ("CI matrix").
+    - cron: "0 6 * * 1"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -112,3 +117,88 @@ jobs:
       - name: Cargo test
         working-directory: apps/desktop/src-tauri
         run: cargo test --all-targets --locked
+
+      # Playwright E2E - Linux only.
+      # The Tauri WebView is not launchable in CI; we run the React
+      # shell against `pnpm dev` in Chromium with a stubbed
+      # `window.__TAURI_INTERNALS__`. Running on every OS would
+      # quadruple browser-binary downloads and add ~15min to the
+      # matrix without catching anything macOS / Windows can't catch
+      # at the Vite + tsc layer above.
+      - name: Cache Playwright browsers
+        if: runner.os == 'Linux'
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright Chromium (with deps)
+        if: runner.os == 'Linux' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter @aseye/desktop exec playwright install --with-deps chromium
+
+      - name: Install Playwright Chromium (system deps only)
+        if: runner.os == 'Linux' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @aseye/desktop exec playwright install-deps chromium
+
+      - name: Run Playwright E2E
+        if: runner.os == 'Linux'
+        run: pnpm --filter @aseye/desktop test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/desktop/playwright-report
+          retention-days: 7
+
+  soak:
+    # Long-form ignored soak tests. Runs on push to main and on the
+    # weekly cron, NOT on every PR (each soak is multi-minute and
+    # would hold the merge queue hostage). Linux only - the soaks
+    # exercise platform-agnostic code (atomic writes, FTS5 query
+    # latency); macOS / Windows runners would burn budget without
+    # adding signal.
+    name: soak (ignored)
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: verify
+
+    env:
+      RUST_BACKTRACE: short
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 1.95.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          components: clippy,rustfmt
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          shared-key: soak-ubuntu
+
+      - name: Install Linux Tauri build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Run ignored soak tests (release)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --release --locked -- --ignored

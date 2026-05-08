@@ -16,27 +16,34 @@ import {
 } from "@tanstack/react-query";
 import type {
   ComponentDetail,
+  ComponentDetailWithRaw,
   ComponentFilter,
   ComponentFindingsCount,
   ComponentSummary,
+  ComponentType,
   DetectedTool,
   FindingSummary,
   HealthSummary,
   PipelineEvent,
+  SaveOutcome,
   SearchQuery,
   SearchResult,
   SecurityFilter,
   SecuritySummary,
+  ToolId,
 } from "@aseye/shared-types";
 import {
   getComponent,
+  getComponentWithRaw,
   getFindingsCountPerComponent,
   getHealthSummary,
   getSecuritySummary,
+  getValidationSchema,
   listComponents,
   listSecurityFindings,
   listTools,
   readComponentRaw,
+  saveComponent,
   search,
   suppressFinding,
   unsuppressFinding,
@@ -52,6 +59,10 @@ export const QUERY_KEYS = {
   components: ["components"] as const,
   component: ["component"] as const,
   componentRaw: ["componentRaw"] as const,
+  /** Phase 3.3 - one-trip detail+raw payload for the Editor view. */
+  componentWithRaw: ["componentWithRaw"] as const,
+  /** Phase 3.3 - bundled JSON Schema text for the form pane. */
+  validationSchema: ["validationSchema"] as const,
   search: ["search"] as const,
   health: ["health"] as const,
   /** Phase 7.3 - security findings, summary, per-component counts. */
@@ -100,6 +111,85 @@ export function useComponent(
     queryFn: () => getComponent(id as string),
     enabled: id !== null,
     staleTime: STALE_COMPONENT_MS,
+  });
+}
+
+/**
+ * Phase 3.3 - one-trip detail + raw bytes for the Editor open path.
+ * Disabled when no component is selected. The pipeline-event
+ * invalidator drives refetch on external file changes.
+ */
+export function useComponentWithRaw(
+  id: string | null,
+): UseQueryResult<ComponentDetailWithRaw | null, Error> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.componentWithRaw, id] as const,
+    queryFn: () => getComponentWithRaw(id as string),
+    enabled: id !== null,
+    staleTime: STALE_COMPONENT_RAW_MS,
+  });
+}
+
+/**
+ * Phase 3.3 - bundled JSON Schema text for a (tool, kind) tuple.
+ * Returns `null` when no schema is bundled. Schemas never change at
+ * runtime, so a long stale time is fine.
+ */
+export function useValidationSchema(
+  tool: ToolId | null,
+  kind: ComponentType | null,
+): UseQueryResult<string | null, Error> {
+  const enabled = tool !== null && kind !== null;
+  return useQuery({
+    queryKey: [...QUERY_KEYS.validationSchema, tool, kind] as const,
+    queryFn: () => getValidationSchema(tool as ToolId, kind as ComponentType),
+    enabled,
+    // Schemas are bundled into the binary; only a new build can
+    // change them.
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** Variables for `useSaveComponent`. */
+export interface SaveComponentVariables {
+  id: string;
+  content: string;
+  originalHash: string;
+}
+
+/**
+ * Save a component through the atomic writer + re-index path. The
+ * mutation invalidates every downstream cache that could change as
+ * a result (`component`, `componentRaw`, `componentWithRaw`,
+ * `components`, `health`, security caches) so the rest of the UI
+ * converges without polling.
+ */
+export function useSaveComponent(): UseMutationResult<
+  SaveOutcome,
+  Error,
+  SaveComponentVariables
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, content, originalHash }) =>
+      saveComponent(id, content, originalHash),
+    onSuccess: (outcome) => {
+      // Only invalidate when the save actually landed. ExternalChange
+      // and ValidationFailed leave the index untouched; refreshing
+      // would be wasted work.
+      if (outcome.kind === "saved") {
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.component });
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.componentRaw });
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.componentWithRaw });
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.components });
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.health });
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.securityFindings });
+        void qc.invalidateQueries({ queryKey: QUERY_KEYS.securitySummary });
+        void qc.invalidateQueries({
+          queryKey: QUERY_KEYS.componentFindingsCounts,
+        });
+      }
+    },
   });
 }
 
@@ -307,6 +397,9 @@ export function usePipelineEventInvalidator(): void {
           // Editor pane re-reads on the next tick so external edits
           // surface in Monaco without a manual refresh.
           void qc.invalidateQueries({ queryKey: QUERY_KEYS.componentRaw });
+          // Phase 3.3 - bundled detail+raw payload tracks the same
+          // refresh cadence as the split commands above.
+          void qc.invalidateQueries({ queryKey: QUERY_KEYS.componentWithRaw });
           // Phase 7.3 - upserts can produce new findings; refresh
           // the security caches so the Sidebar count and Inventory
           // shield badge converge on the new state.

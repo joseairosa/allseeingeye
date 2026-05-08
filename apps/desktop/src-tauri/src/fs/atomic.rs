@@ -352,4 +352,205 @@ mod tests {
         let read = stdfs::read(&target).expect("read final");
         assert_eq!(read, last, "final file must match last write");
     }
+
+    /// Concurrent soak: 4 OS threads each write 1 000 distinct paths
+    /// in the same tempdir. After every thread finishes:
+    ///
+    /// * each path's final content matches the last bytes that thread
+    ///   wrote to it (no inter-thread clobbering on the rename step), and
+    /// * no `.aseye-tmp-*` debris remains in the dir (the temp file
+    ///   lifecycle stays clean across threads).
+    ///
+    /// Phase 5.1 - exercises the rename + parent-fsync path under
+    /// concurrency. Distinct paths per thread guarantees no logical
+    /// race on the *target* file; the threads do contend on the
+    /// shared parent directory, which is exactly the surface we
+    /// want to stress.
+    #[test]
+    #[ignore = "long-running soak test; run with --ignored"]
+    fn soak_atomic_writes_concurrent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().expect("tempdir");
+        let dir_path = Arc::new(dir.path().to_path_buf());
+        let writes_per_thread: u32 = 1000;
+        let thread_count: u32 = 4;
+
+        // Per-thread "expected final content" map, returned on join
+        // so the assertion can run in the parent thread (rather than
+        // panicking inside a worker).
+        let mut handles = Vec::new();
+        for tid in 0..thread_count {
+            let dir_path = Arc::clone(&dir_path);
+            handles.push(thread::spawn(
+                move || -> Vec<(std::path::PathBuf, Vec<u8>)> {
+                    let mut state: u64 = 0x00C0_FFEE_0000_0000_u64.wrapping_add(u64::from(tid));
+                    let mut last: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
+                    for i in 0..writes_per_thread {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        // One distinct path per (thread, iteration).
+                        let target = dir_path.join(format!("t{tid}-i{i}.bin"));
+                        let len = usize::try_from(state & 0x1FF).expect("9-bit mask") + 1;
+                        let mut buf = Vec::with_capacity(len);
+                        for j in 0_u32..u32::try_from(len).expect("len fits u32") {
+                            let mixed = i.wrapping_add(j) ^ tid.wrapping_mul(7);
+                            buf.push(u8::try_from(mixed & 0xFF).expect("byte mask"));
+                        }
+                        atomic_write(&target, &buf).expect("concurrent atomic_write");
+                        last.push((target, buf));
+                    }
+                    last
+                },
+            ));
+        }
+
+        let mut all_expected: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
+        for h in handles {
+            all_expected.extend(h.join().expect("thread joined cleanly"));
+        }
+
+        // Every final file must equal the bytes that thread wrote to
+        // it on its last iteration. Distinct paths means no
+        // last-writer-wins ambiguity; the assertion is exact.
+        for (path, expected) in &all_expected {
+            let got = stdfs::read(path).expect("read final");
+            assert_eq!(&got, expected, "content mismatch for {path:?}");
+        }
+
+        // No `.aseye-tmp-*` debris in the parent dir: the cleanup
+        // path inside `atomic_write` removed every intermediate temp
+        // file, even under concurrency.
+        let entries: Vec<String> = stdfs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !entries.iter().any(|name| name.contains(".aseye-tmp-")),
+            "temp file debris under concurrency: {entries:?}"
+        );
+    }
+
+    /// Soak: rotate the trusted-root list while writes are in flight.
+    ///
+    /// Two trusted roots, a writer thread, and a rotator thread.
+    /// The writer keeps issuing `safe_atomic_write_with_options`
+    /// against a path under root A. The rotator alternately presents
+    /// `[root_a]`, `[root_a, root_b]`, and `[root_b, root_a]` as the
+    /// allowed-roots slice. Goal: regardless of which slice is in
+    /// effect, the writer either (a) succeeds because A is in the
+    /// slice, or (b) fails cleanly with `EscapeDetected` /
+    /// `NotInAnyRoot`. No partial state, no debris, no panics.
+    ///
+    /// Phase 5.1 - the pattern is meant to mirror what happens when
+    /// the user rescans tools or a tool descriptor reloads under the
+    /// watcher's nose: the trusted-root set changes; in-flight
+    /// writers must remain safe.
+    #[test]
+    #[ignore = "long-running soak test; run with --ignored"]
+    fn soak_safe_atomic_write_under_changing_roots() {
+        use crate::fs::safety::safe_atomic_write_with_options;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Duration;
+
+        let root_a = tempdir().expect("root_a");
+        let root_b = tempdir().expect("root_b");
+        // Pre-create the parent dir for the writer's target file so
+        // canonicalisation works on every iteration. The writer
+        // writes a brand-new file each iteration but always under
+        // the same parent.
+        let target_parent = root_a.path().join("aseye");
+        stdfs::create_dir_all(&target_parent).expect("mkdir target parent");
+
+        let stop = Arc::new(AtomicBool::new(false));
+
+        // Rotator: cycle the allowed-roots slice every ~2 ms. No
+        // synchronisation with the writer beyond the AtomicBool.
+        // The rotator is purely a stress generator; the writer
+        // chooses its own slice from a snapshot at call time.
+        //
+        // We model "rotation" as a phase counter the writer reads
+        // each iteration. This avoids a shared mutable Vec across
+        // threads (which would need a Mutex and obscure the real
+        // contention shape we want to stress).
+        let phase = Arc::new(parking_lot::Mutex::new(0_u32));
+        let rotator = {
+            let stop = Arc::clone(&stop);
+            let phase = Arc::clone(&phase);
+            thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    {
+                        let mut p = phase.lock();
+                        *p = p.wrapping_add(1);
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+            })
+        };
+
+        // Writer: 4 000 iterations, one new file per iteration.
+        let writer_count: u32 = 4000;
+        let mut succeeded: u32 = 0;
+        let mut failed_clean: u32 = 0;
+        for i in 0..writer_count {
+            let p = *phase.lock();
+            let roots: Vec<&Path> = match p % 3 {
+                0 => vec![root_a.path()],
+                1 => vec![root_a.path(), root_b.path()],
+                _ => vec![root_b.path(), root_a.path()],
+            };
+            let target = target_parent.join(format!("rot-{i}.bin"));
+            let payload = format!("rot {i}").into_bytes();
+            match safe_atomic_write_with_options(
+                &target, &payload, &roots, /* allow_outside_home: */ true,
+            ) {
+                Ok(()) => succeeded += 1,
+                Err(
+                    crate::fs::error::FsError::EscapeDetected { .. }
+                    | crate::fs::error::FsError::NotInAnyRoot { .. },
+                ) => {
+                    failed_clean += 1;
+                }
+                Err(other) => panic!("unexpected error during root rotation: {other:?}"),
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        rotator.join().expect("rotator joined");
+
+        // Every iteration must terminate as either a clean success
+        // or a clean root-rejection - never a panic, never a partial
+        // file. The split is incidental; what matters is the total.
+        assert_eq!(
+            succeeded + failed_clean,
+            writer_count,
+            "every iteration must complete cleanly: \
+             succeeded={succeeded}, failed_clean={failed_clean}",
+        );
+        // root_a is in every slice configuration this rotator
+        // produces, so every write should have succeeded. Asserting
+        // the success count proves the rotation didn't drop the
+        // root-A inclusion, which would cause spurious failures.
+        assert_eq!(
+            succeeded, writer_count,
+            "writes against root_a must always succeed: \
+             succeeded={succeeded}, failed_clean={failed_clean}",
+        );
+
+        // No temp-file debris in the writer's directory.
+        let entries: Vec<String> = stdfs::read_dir(&target_parent)
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !entries.iter().any(|name| name.contains(".aseye-tmp-")),
+            "temp file debris under root rotation: {entries:?}"
+        );
+    }
 }

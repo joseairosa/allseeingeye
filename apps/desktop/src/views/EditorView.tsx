@@ -1,52 +1,50 @@
 /**
- * Editor view (Phase 3.1).
+ * Editor view (Phase 3.3).
  *
- * Phase 3.1 ships the editor SHELL plus a lazy-loaded Monaco raw pane
- * so the user can view and edit the on-disk text. Schema-aware form
- * inputs (Phase 3.2) and AST round-trip + save (Phase 3.3) are
- * deliberately stubbed:
- *   - The save / discard buttons are disabled.
- *   - The form pane is a static placeholder populated with a few
- *     read-only frontmatter fields when the parser exposed them.
+ * Wires the form ↔ raw round-trip plus the save flow:
+ *   * `useComponentWithRaw` opens both halves in one IPC call.
+ *   * `EditState` reducer holds Monaco's buffer + the projected AST.
+ *   * `FormPane` renders schema-driven inputs; edits flow through
+ *     `setFormField`, project back to raw, and Monaco reflects the
+ *     change on the next render.
+ *   * `MonacoRawPane` writes through `setRaw`; the AST re-projects
+ *     after a 250ms idle window to keep keystroke latency clean.
+ *   * Cmd-S triggers the save mutation; `SaveOutcome` is mapped to
+ *     toast / banner state.
  *
  * Monaco lives behind `React.lazy` so the main bundle never imports
  * `monaco-editor`. The first time the user opens the Editor view the
  * Monaco chunk loads; subsequent visits are cached.
  */
-import { Suspense, lazy, useMemo, type ReactElement } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { useUi } from "@/store/ui";
 import { SaveIcon } from "@/components/icons";
-import { useComponent, useComponentRaw } from "@/ipc/hooks";
-import type { ComponentDetail } from "@aseye/shared-types";
+import {
+  useComponentWithRaw,
+  useSaveComponent,
+  useValidationSchema,
+} from "@/ipc/hooks";
+import { EDITOR_SAVE_EVENT } from "@/lib/keyboard";
+import type { SaveOutcome, ValidationError } from "@aseye/shared-types";
+import {
+  editReducer,
+  externalChangeFromOutcome,
+  type EditState,
+} from "./editor/EditState";
+import { FormPane, parseSchema, type SchemaShape } from "./editor/FormPane";
+import { projectorFor } from "./editor/serialise";
 
-// Code-split target. The dynamic `import()` is what Vite's Rollup
-// config keys off to emit a separate `MonacoRawPane-*.js` chunk that
-// pulls `@monaco-editor/react` + `monaco-editor` along with it.
 const MonacoRawPane = lazy(() => import("./editor/MonacoRawPane"));
-
-/**
- * Pull a small, safe set of frontmatter fields out of the parsed JSON
- * the Rust parser already produced. We render them read-only as a
- * placeholder for the schema-driven form that lands in Phase 3.2.
- */
-function frontmatterFields(detail: ComponentDetail): Record<string, string> {
-  if (!detail.parsedJson) return {};
-  try {
-    const parsed: unknown = JSON.parse(detail.parsedJson);
-    if (parsed === null || typeof parsed !== "object") return {};
-    const fm = (parsed as Record<string, unknown>)["frontmatter"];
-    if (fm === null || typeof fm !== "object" || Array.isArray(fm)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(fm as Record<string, unknown>)) {
-      if (typeof v === "string") out[k] = v;
-      else if (typeof v === "number" || typeof v === "boolean") out[k] = String(v);
-      // Arrays / objects skipped - Phase 3.2 handles structured fields.
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
 
 /** Skeleton mirrors Monaco's footprint so the layout doesn't jump. */
 function MonacoSkeleton(): ReactElement {
@@ -61,60 +59,112 @@ function MonacoSkeleton(): ReactElement {
   );
 }
 
-interface EditorBodyProps {
-  detail: ComponentDetail;
-  raw: string;
+function EditorEmpty(): ReactElement {
+  return (
+    <div className="editor-empty" role="status">
+      Pick a component to start editing.
+    </div>
+  );
 }
 
-function EditorBody({ detail, raw }: EditorBodyProps): ReactElement {
-  const fields = useMemo(() => frontmatterFields(detail), [detail]);
+/** Toast shapes the EditorView surfaces above the layout. */
+type Toast =
+  | { kind: "success"; message: string }
+  | { kind: "error"; message: string };
 
+interface EditorBodyProps {
+  state: EditState;
+  schema: SchemaShape | null;
+  format: string;
+  onRawChange: (raw: string) => void;
+  onFieldChange: (pointer: string, value: unknown) => void;
+}
+
+function EditorBody({
+  state,
+  schema,
+  format,
+  onRawChange,
+  onFieldChange,
+}: EditorBodyProps): ReactElement {
+  const errors = state.validation?.errors ?? [];
   return (
     <div className="editor-layout">
-      <form
-        className="form-pane"
-        aria-label="schema form"
-        onSubmit={(e) => e.preventDefault()}
-      >
-        <div className="pane-title">
-          <span>form view</span>
-          <span className="health-pill up">phase 3.2</span>
-        </div>
-        <p className="settings-todo">
-          Form view lands in Phase 3.2. Until then the fields below mirror
-          the parsed frontmatter and stay read-only.
-        </p>
-        {Object.entries(fields).map(([name, value]) => (
-          <label key={name} className="field">
-            <span>{name}</span>
-            <input value={value} readOnly />
-          </label>
-        ))}
-        {Object.keys(fields).length === 0 ? (
-          <label className="field">
-            <span>frontmatter</span>
-            <input value="(none parsed)" readOnly />
-          </label>
-        ) : null}
-      </form>
-
+      <FormPane
+        ast={state.formAst}
+        errors={errors}
+        schema={schema}
+        format={format}
+        parseError={state.parseError}
+        onFieldChange={onFieldChange}
+      />
       <div className="raw-pane" aria-label="raw editor">
         <div className="pane-title">
           <span>raw view</span>
-          <span className="mono">{detail.format}</span>
+          {state.dirty ? <span className="health-pill warn">unsaved</span> : null}
         </div>
         <Suspense fallback={<MonacoSkeleton />}>
-          <MonacoRawPane content={raw} format={detail.format} />
+          <MonacoRawPane
+            content={state.currentRaw}
+            format={format as Parameters<typeof MonacoRawPane>[0]["format"]}
+            onChange={onRawChange}
+          />
         </Suspense>
       </div>
     </div>
   );
 }
 
-function EditorEmpty(): ReactElement {
+/** Banner rendered when the file changed under us between open and save. */
+function ExternalChangeBanner({
+  onReload,
+  onForceSave,
+}: {
+  onReload: () => void;
+  onForceSave: () => void;
+}): ReactElement {
   return (
-    <div className="editor-empty" role="status">
-      Pick a component to start editing.
+    <div className="validation-box" role="alert" aria-live="polite">
+      <span>!</span>
+      <div>
+        <p>
+          The file changed on disk while you were editing. Reload to discard
+          your changes and pull the latest, or save anyway to overwrite the
+          external edit.
+        </p>
+        <div className="editor-actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="text-button quiet"
+            onClick={onReload}
+          >
+            reload
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onForceSave}
+          >
+            save anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Light toast banner shown above the editor body. */
+function ToastBanner({ toast }: { toast: Toast }): ReactElement {
+  const role = toast.kind === "error" ? "alert" : "status";
+  return (
+    <div
+      className="validation-box"
+      role={role}
+      aria-live="polite"
+      data-toast-kind={toast.kind}
+    >
+      <span>{toast.kind === "error" ? "!" : "✓"}</span>
+      <p>{toast.message}</p>
     </div>
   );
 }
@@ -124,29 +174,208 @@ export function EditorView(): ReactElement {
   const isActive = view === "editor";
   const selectedId = useUi((s) => s.selectedComponentId);
 
-  // The detail query feeds the form pane; the raw query feeds Monaco.
-  // Both are gated on `selectedId !== null` inside the hook.
-  const detailQuery = useComponent(selectedId);
-  const rawQuery = useComponentRaw(selectedId);
+  // Single round-trip on open: detail + raw + hash.
+  const componentQuery = useComponentWithRaw(selectedId);
+  const detail = componentQuery.data ?? null;
+  const tool = detail?.detail.tool ?? null;
+  const kind = detail?.detail.kind ?? null;
+  const format = detail?.detail.format ?? "markdown";
 
+  const schemaQuery = useValidationSchema(tool, kind);
+  const schema = useMemo(
+    () => parseSchema(schemaQuery.data ?? null),
+    [schemaQuery.data],
+  );
+
+  const projector = useMemo(() => projectorFor(format), [format]);
+  const [state, dispatch] = useReducer(editReducer, null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const saveMutation = useSaveComponent();
+
+  // Re-project on idle so keystroke latency stays clean. Resets the
+  // timer on every raw change.
+  const idleTimer = useRef<number | null>(null);
+
+  // Re-init the reducer whenever a new component+raw payload lands.
+  useEffect(() => {
+    if (detail !== null) {
+      dispatch({ type: "open", detail, project: projector.project });
+      setToast(null);
+    }
+  }, [detail, projector.project]);
+
+  // Pipeline-event-driven external change: when TanStack Query
+  // invalidates the bundle and the new payload's hash differs from
+  // the editor's snapshot, surface the banner. This catches
+  // out-of-band edits while the editor is open.
+  useEffect(() => {
+    if (state === null) return;
+    if (detail === null) return;
+    if (detail.hash === state.originalHash) return;
+    // Only flip when the editor is dirty - if the user has not
+    // edited yet, we just re-open with the new content.
+    if (!state.dirty) {
+      dispatch({ type: "open", detail, project: projector.project });
+      return;
+    }
+    dispatch({
+      type: "noteExternalChange",
+      payload: { currentHash: detail.hash, currentContent: detail.raw },
+    });
+  }, [detail, projector.project, state]);
+
+  const handleRawChange = useCallback(
+    (raw: string) => {
+      // Quick path: update Monaco's mirror immediately so the buffer
+      // is the source of truth without waiting for the idle timer.
+      // The reducer also debounces the AST re-projection so a stream
+      // of keystrokes doesn't burn CPU on each character.
+      if (idleTimer.current !== null) {
+        window.clearTimeout(idleTimer.current);
+      }
+      idleTimer.current = window.setTimeout(() => {
+        dispatch({ type: "setRaw", raw, project: projector.project });
+      }, 250);
+      // Also dispatch synchronously with the latest text so the
+      // dirty flag flips on the next render. The idle re-projection
+      // will reconcile the AST a moment later.
+      dispatch({ type: "setRaw", raw, project: projector.project });
+    },
+    [projector.project],
+  );
+
+  const handleFieldChange = useCallback(
+    (pointer: string, value: unknown) => {
+      dispatch({
+        type: "setFormField",
+        pointer,
+        value,
+        serialise: projector.serialise,
+      });
+    },
+    [projector.serialise],
+  );
+
+  const handleDiscard = useCallback(() => {
+    dispatch({ type: "discard" });
+    setToast(null);
+  }, []);
+
+  const runSave = useCallback(
+    (originalHash: string) => {
+      if (state === null) return;
+      saveMutation.mutate(
+        { id: state.id, content: state.currentRaw, originalHash },
+        {
+          onSuccess: (outcome: SaveOutcome) => {
+            switch (outcome.kind) {
+              case "saved":
+                dispatch({ type: "markSaved", newHash: outcome.newHash });
+                setToast({ kind: "success", message: "saved" });
+                break;
+              case "externalChange":
+                dispatch({
+                  type: "noteExternalChange",
+                  payload: externalChangeFromOutcome(outcome),
+                });
+                setToast(null);
+                break;
+              case "validationFailed":
+                // Render errors next to fields; surface a top-level
+                // toast so the user knows the save was rejected.
+                dispatch({
+                  type: "setValidation",
+                  outcome: {
+                    ok: false,
+                    errors: outcome.errors as ValidationError[],
+                    warnings: [],
+                  },
+                });
+                setToast({
+                  kind: "error",
+                  message: `save blocked: ${outcome.errors.length} validation error${outcome.errors.length === 1 ? "" : "s"}`,
+                });
+                break;
+              case "forbidden":
+                setToast({
+                  kind: "error",
+                  message: `save refused: ${outcome.reason}`,
+                });
+                break;
+            }
+          },
+          onError: (err) => {
+            setToast({ kind: "error", message: err.message });
+          },
+        },
+      );
+    },
+    [saveMutation, state],
+  );
+
+  const handleSave = useCallback(() => {
+    if (state === null || !state.dirty) return;
+    runSave(state.originalHash);
+  }, [runSave, state]);
+
+  const handleReload = useCallback(() => {
+    if (state === null || state.externalChange === null) return;
+    // Re-open the editor against the disk content. We synthesise a
+    // new "open" so the AST + history reset cleanly.
+    if (detail === null) return;
+    dispatch({
+      type: "open",
+      detail: {
+        ...detail,
+        raw: state.externalChange.currentContent,
+        hash: state.externalChange.currentHash,
+      },
+      project: projector.project,
+    });
+    setToast(null);
+  }, [detail, projector.project, state]);
+
+  const handleForceSave = useCallback(() => {
+    if (state === null || state.externalChange === null) return;
+    runSave(state.externalChange.currentHash);
+  }, [runSave, state]);
+
+  // Cmd-S routing: the keyboard layer dispatches a custom event when
+  // the editor view is active.
+  useEffect(() => {
+    function onSave(): void {
+      if (!isActive) return;
+      handleSave();
+    }
+    window.addEventListener(EDITOR_SAVE_EVENT, onSave);
+    return () => window.removeEventListener(EDITOR_SAVE_EVENT, onSave);
+  }, [handleSave, isActive]);
+
+  // Auto-clear the toast after a few seconds so it doesn't stick.
+  useEffect(() => {
+    if (toast === null) return;
+    const id = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  // Heading + path strip mirror Phase 3.1 conventions.
   let heading = "editor";
   let path = "";
   if (selectedId === null) {
     heading = "editor";
-  } else if (detailQuery.isPending && !detailQuery.data) {
+  } else if (componentQuery.isPending && !detail) {
     heading = "loading...";
-  } else if (!detailQuery.data) {
+  } else if (!detail) {
     heading = "component not found";
   } else {
-    heading = `${detailQuery.data.kind}: ${detailQuery.data.name}`;
-    path = detailQuery.data.path;
+    heading = `${detail.detail.kind}: ${detail.detail.name}`;
+    path = detail.detail.path;
   }
 
   let body: ReactElement;
   if (selectedId === null) {
     body = <EditorEmpty />;
-  } else if (detailQuery.isPending && !detailQuery.data) {
-    // Skeleton: empty layout while the first round-trip lands.
+  } else if (componentQuery.isPending && !detail) {
     body = (
       <div className="editor-layout">
         <div className="form-pane">
@@ -159,19 +388,24 @@ export function EditorView(): ReactElement {
         </div>
       </div>
     );
-  } else if (!detailQuery.data) {
-    body = <EditorEmpty />;
-  } else if (rawQuery.isError) {
-    // Surface the typed IPC error verbatim so the user sees why we
-    // didn't open the file (oversize, missing, not UTF-8, ...).
+  } else if (componentQuery.isError) {
     body = (
       <div className="editor-empty" role="alert">
-        Could not read file: {rawQuery.error.message}
+        Could not open component: {componentQuery.error.message}
       </div>
     );
+  } else if (!detail || state === null) {
+    body = <EditorEmpty />;
   } else {
-    const raw = rawQuery.data ?? "";
-    body = <EditorBody detail={detailQuery.data} raw={raw} />;
+    body = (
+      <EditorBody
+        state={state}
+        schema={schema}
+        format={format}
+        onRawChange={handleRawChange}
+        onFieldChange={handleFieldChange}
+      />
+    );
   }
 
   return (
@@ -190,24 +424,38 @@ export function EditorView(): ReactElement {
           <button
             type="button"
             className="text-button quiet"
-            disabled
-            aria-label="discard (Phase 3.3)"
-            title="Discard wires up in Phase 3.3"
+            onClick={handleDiscard}
+            disabled={state === null || !state.dirty}
+            aria-label="discard"
           >
             discard
           </button>
           <button
             type="button"
             className="primary-button"
-            disabled
-            aria-label="save (Phase 3.3)"
-            title="Save wires up in Phase 3.3"
+            onClick={handleSave}
+            disabled={
+              state === null ||
+              !state.dirty ||
+              saveMutation.isPending ||
+              state.externalChange !== null
+            }
+            aria-label="save"
+            title="save (Cmd-S)"
           >
             <SaveIcon />
             save
           </button>
         </div>
       </div>
+
+      {state?.externalChange ? (
+        <ExternalChangeBanner
+          onReload={handleReload}
+          onForceSave={handleForceSave}
+        />
+      ) : null}
+      {toast ? <ToastBanner toast={toast} /> : null}
 
       {body}
     </section>

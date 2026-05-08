@@ -951,3 +951,129 @@ mod tests {
         assert_eq!(fts, 0);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    //! Property tests for the upsert pipeline.
+    //!
+    //! Phase 5.1 - exercises the `Inserted -> Unchanged` and
+    //! `Inserted -> Updated` transitions across randomly-shaped
+    //! Markdown skill bodies. The test corpus is bounded to ASCII +
+    //! newline content so we test the index machinery (hash compare,
+    //! row upsert, FTS update), not the parser layer's UTF-8 edge
+    //! cases that the parser proptests already cover.
+    //!
+    //! 64 cases per property: enough to exercise the conditional
+    //! branches in `write_parsed` (existing-hash equal, existing-hash
+    //! different, no existing row) without dragging the test runtime
+    //! out.
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    use super::{upsert_component, IndexHandle, UpsertKind};
+    use crate::registry::tools;
+    use crate::registry::types::ComponentType;
+    use proptest::prelude::*;
+
+    /// Compose a Claude Code skill on disk with the given body. Mirrors
+    /// `tests::setup_skill` but takes the body verbatim so the
+    /// strategy can drive content variation.
+    fn write_skill(home: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        let dir = home.join(".claude").join("skills").join(name);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("SKILL.md");
+        let content = format!("---\nname: {name}\ndescription: a skill called {name}\n---\n{body}");
+        fs::write(&path, content).expect("write");
+        path
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// `upsert(content)` then `upsert(same content)` must report
+        /// `Unchanged` on the second call. Prevents a regression where
+        /// the hash-compare gate gets bypassed (which would re-write
+        /// the FTS row and re-emit pipeline events on every poll).
+        #[test]
+        fn proptest_idempotent_upsert(body in "[a-z0-9 \\n]{0,128}") {
+            let home = tempdir().expect("tempdir");
+            let path = write_skill(home.path(), "foo", &body);
+            let descriptor = tools::claude_code();
+            let root = descriptor
+                .component_roots
+                .iter()
+                .find(|r| r.component_type == ComponentType::Skill)
+                .expect("skill root");
+
+            let handle = IndexHandle::open_in_memory().expect("open");
+            let first = upsert_component(&handle, &descriptor, root, &path, "foo")
+                .expect("first upsert");
+            prop_assert_eq!(first.kind, UpsertKind::Inserted);
+
+            let second = upsert_component(&handle, &descriptor, root, &path, "foo")
+                .expect("second upsert");
+            prop_assert_eq!(second.kind, UpsertKind::Unchanged);
+            prop_assert_eq!(first.id, second.id);
+        }
+
+        /// Sequential upserts to the same path with different bodies
+        /// must (a) report `Updated` on the second call, and (b)
+        /// surface the latest hash in the row, not the previous one.
+        ///
+        /// Bodies are constrained so the two strategies can never
+        /// collide on identical content (the assertion would fire
+        /// `Unchanged` instead of `Updated` and the assume() would
+        /// drop the case).
+        #[test]
+        fn proptest_replace_returns_latest_hash(
+            first_body in "[a-z]{1,32}",
+            second_body in "[A-Z]{1,32}",
+        ) {
+            // Different alphabets guarantee distinct content; no
+            // prop_assume needed.
+            let home = tempdir().expect("tempdir");
+            let path = write_skill(home.path(), "foo", &first_body);
+            let descriptor = tools::claude_code();
+            let root = descriptor
+                .component_roots
+                .iter()
+                .find(|r| r.component_type == ComponentType::Skill)
+                .expect("skill root");
+
+            let handle = IndexHandle::open_in_memory().expect("open");
+            let first = upsert_component(&handle, &descriptor, root, &path, "foo")
+                .expect("first upsert");
+            prop_assert_eq!(first.kind, UpsertKind::Inserted);
+
+            // Read back the first hash so we can assert the second
+            // upsert moved away from it.
+            let first_hash: String = handle
+                .read(|c| Ok(c.query_row(
+                    "SELECT hash FROM component WHERE id = ?1",
+                    rusqlite::params![first.id],
+                    |r| r.get(0),
+                )?))
+                .expect("read first hash");
+
+            // Rewrite with the second body and re-upsert.
+            let content = format!(
+                "---\nname: foo\ndescription: a skill called foo\n---\n{second_body}",
+            );
+            fs::write(&path, content).expect("rewrite");
+
+            let second = upsert_component(&handle, &descriptor, root, &path, "foo")
+                .expect("second upsert");
+            prop_assert_eq!(second.kind, UpsertKind::Updated);
+
+            let second_hash: String = handle
+                .read(|c| Ok(c.query_row(
+                    "SELECT hash FROM component WHERE id = ?1",
+                    rusqlite::params![second.id],
+                    |r| r.get(0),
+                )?))
+                .expect("read second hash");
+            prop_assert_ne!(first_hash, second_hash);
+        }
+    }
+}

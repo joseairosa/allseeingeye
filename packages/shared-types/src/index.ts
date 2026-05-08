@@ -24,6 +24,16 @@ export type { HealthSummary } from "../../../apps/desktop/src-tauri/bindings/ipc
 export type { ToolHealthCount } from "../../../apps/desktop/src-tauri/bindings/ipc/ToolHealthCount";
 export type { IpcError } from "../../../apps/desktop/src-tauri/bindings/ipc/IpcError";
 
+// Phase 3.3 - Editor save flow.
+export type { SaveOutcome } from "../../../apps/desktop/src-tauri/bindings/ipc/SaveOutcome";
+export type { ComponentDetailWithRaw } from "../../../apps/desktop/src-tauri/bindings/ipc/ComponentDetailWithRaw";
+
+// Phase 3.2 - validator surface (re-exported here for the Editor form).
+export type { ValidationError } from "../../../apps/desktop/src-tauri/bindings/validator/ValidationError";
+export type { ValidationOutcome } from "../../../apps/desktop/src-tauri/bindings/validator/ValidationOutcome";
+export type { ValidationWarning } from "../../../apps/desktop/src-tauri/bindings/validator/ValidationWarning";
+export type { ValidationWarningKind } from "../../../apps/desktop/src-tauri/bindings/validator/ValidationWarningKind";
+
 // Phase 7.3: Security view wire types.
 export type { Severity } from "../../../apps/desktop/src-tauri/bindings/security/Severity";
 export type { Category as SecurityCategory } from "../../../apps/desktop/src-tauri/bindings/security/Category";

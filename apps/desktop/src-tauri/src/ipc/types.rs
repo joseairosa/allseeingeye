@@ -10,6 +10,7 @@ use ts_rs::TS;
 
 use crate::registry::types::{ComponentType, Format, Scope, ToolId};
 use crate::security::{Category as SecurityCategory, Severity};
+use crate::validator::ValidationError;
 
 /// Strongly-typed IPC error returned by commands that need to discriminate
 /// failure modes (rather than collapsing everything to a `String`). The
@@ -282,4 +283,89 @@ pub struct SecuritySummary {
     pub by_severity: SeverityCounts,
     pub by_category: SecurityCategoryCounts,
     pub suppressed: u32,
+}
+
+// ─── Phase 3.3 - Editor save flow ───────────────────────────────────────
+
+/// Outcome of a `save_component` call.
+///
+/// One of four shapes - the React layer pattern-matches on `kind`:
+///
+/// * `Saved` - the file was written and re-indexed; the new content
+///   hash and mtime are returned so the editor can update its
+///   "original" snapshot for the next external-change check.
+/// * `ExternalChange` - the on-disk hash diverged from the hash the
+///   editor opened the file with. The current bytes + hash are
+///   returned so the UI can render a diff banner with "Reload" /
+///   "Save anyway" choices.
+/// * `ValidationFailed` - the new content parses but fails the
+///   per-tool schema. The errors are returned with JSON pointers so
+///   the form pane can highlight the offending fields. We do **not**
+///   write to disk in this case.
+/// * `Forbidden` - a path-safety guard rejected the write
+///   (forbidden segment, escape outside the tool root, ...). The
+///   reason is human-readable.
+///
+/// All variants are camelCase on the wire (`saved` /
+/// `externalChange` / `validationFailed` / `forbidden`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/SaveOutcome.ts")]
+#[ts(rename_all = "camelCase")]
+pub enum SaveOutcome {
+    /// File written + re-indexed.
+    Saved {
+        /// New SHA-256 (hex) of the on-disk content.
+        #[serde(rename = "newHash")]
+        #[ts(rename = "newHash")]
+        new_hash: String,
+        /// Unix epoch seconds for the new file mtime.
+        mtime: i64,
+    },
+    /// On-disk hash diverged from the supplied `original_hash`. The
+    /// caller is expected to render a diff banner against
+    /// `current_content` and let the user choose "Reload" or "Save
+    /// anyway".
+    ExternalChange {
+        /// SHA-256 (hex) of the bytes currently on disk.
+        #[serde(rename = "currentHash")]
+        #[ts(rename = "currentHash")]
+        current_hash: String,
+        /// Bytes currently on disk (UTF-8). Capped at the parser's
+        /// `MAX_PARSE_SIZE` for the same reason `read_component_raw`
+        /// is - the editor cannot meaningfully diff multi-MB blobs.
+        #[serde(rename = "currentContent")]
+        #[ts(rename = "currentContent")]
+        current_content: String,
+    },
+    /// Parse succeeded but the per-tool schema rejected the result.
+    /// The file was NOT written. Errors carry JSON pointers so the
+    /// form pane can highlight the relevant fields.
+    ValidationFailed { errors: Vec<ValidationError> },
+    /// A path-safety guard refused the write. The reason is
+    /// human-readable; the UI surfaces it as a toast.
+    Forbidden { reason: String },
+}
+
+/// One-trip Editor open payload combining `get_component` with the
+/// raw on-disk text.
+///
+/// Phase 3.3 introduces this so the Editor view can populate Monaco +
+/// the form pane in a single round-trip rather than two
+/// (`get_component` followed by `read_component_raw`). The two earlier
+/// commands stay because Quick Look + the Inventory previewer still
+/// only need one of them.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/ipc/ComponentDetailWithRaw.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct ComponentDetailWithRaw {
+    /// The same shape `get_component` returns.
+    pub detail: ComponentDetail,
+    /// Raw UTF-8 bytes off disk - what Monaco edits.
+    pub raw: String,
+    /// SHA-256 (hex) snapshot of `raw` at open time. The editor
+    /// hands this back on save so the backend can detect external
+    /// changes.
+    pub hash: String,
 }

@@ -14,21 +14,28 @@
 // "unnecessary by-value" but the signature is dictated by Tauri.
 #![allow(clippy::needless_pass_by_value)]
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rusqlite::params;
 use tauri::State;
 
 use super::types::{
-    ComponentDetail, ComponentFilter, ComponentFindingsCount, ComponentSummary, FindingSummary,
-    HealthSummary, IpcError, SearchQuery, SearchResult, SecurityCategoryCounts, SecurityFilter,
-    SecuritySummary, SeverityCounts, ToolHealthCount,
+    ComponentDetail, ComponentDetailWithRaw, ComponentFilter, ComponentFindingsCount,
+    ComponentSummary, FindingSummary, HealthSummary, IpcError, SaveOutcome, SearchQuery,
+    SearchResult, SecurityCategoryCounts, SecurityFilter, SecuritySummary, SeverityCounts,
+    ToolHealthCount,
 };
+use crate::fs::safe_atomic_write_with_options;
 use crate::index::upsert::{parse_component_type, parse_scope, parse_tool_id};
-use crate::index::IndexHandle;
+use crate::index::{upsert_component, IndexHandle};
+use crate::parser::{hash, parse_bytes};
 use crate::pipeline::{ScanContext, ScanReport};
-use crate::registry::types::{ComponentType, Format, Scope, ToolId};
+use crate::registry::detect::expand_home;
+use crate::registry::registry as registry_descriptors;
+use crate::registry::types::{ComponentRoot, ComponentType, Format, Scope, ToolDescriptor, ToolId};
 use crate::security::{Category as SecurityCategory, Severity};
+use crate::validator::{schema_for_tuple, validate, ValidationError};
 
 /// Server-side cap for `list_components` to protect the IPC channel
 /// from accidentally fetching the entire index in one call.
@@ -175,6 +182,65 @@ pub fn validate_component(
     id: String,
 ) -> Result<crate::validator::ValidationOutcome, String> {
     crate::validator::validate_by_id(state.inner().as_ref(), &id).map_err(|e| e.to_string())
+}
+
+// ─── Phase 3.3 - Editor save flow ───────────────────────────────────────
+
+/// Persist the editor's buffer back to disk through the atomic writer
+/// + path-safety guards, then re-index the component so the rest of
+/// the UI converges on the new state.
+///
+/// The caller passes the SHA-256 it received when it opened the file.
+/// If the on-disk hash diverged in the meantime (an external editor
+/// or another process touched the file), we return
+/// [`SaveOutcome::ExternalChange`] with the current bytes so the UI
+/// can render a diff banner without a second IPC round-trip.
+///
+/// Validation runs against the same per-tool schema as
+/// [`crate::index::upsert::upsert_component`] uses - the upsert hot
+/// path validates on write; this command validates **before** we write
+/// so a malformed save never even reaches the atomic writer.
+///
+/// The path-safety guard rejects writes outside the matching
+/// descriptor's `watch_paths`. Forbidden segments (`.git`,
+/// `node_modules`, `target`, ...) and symlink escapes both surface as
+/// [`SaveOutcome::Forbidden`] with a human-readable reason.
+#[tauri::command]
+pub fn save_component(
+    state: State<'_, Arc<IndexHandle>>,
+    id: String,
+    content: String,
+    original_hash: String,
+) -> Result<SaveOutcome, String> {
+    save_component_inner(state.inner().as_ref(), &id, &content, &original_hash, None)
+        .map_err(|e| e.to_string())
+}
+
+/// One-trip detail + raw bytes payload for the Editor view.
+///
+/// Equivalent to `get_component` followed by `read_component_raw`,
+/// bundled so the Editor can populate Monaco + the form pane in a
+/// single IPC call. Earlier surfaces (Quick Look, Inventory previewer)
+/// still use the two split commands because they only need one half.
+#[tauri::command]
+pub fn get_component_with_raw(
+    state: State<'_, Arc<IndexHandle>>,
+    id: String,
+) -> Result<Option<ComponentDetailWithRaw>, IpcError> {
+    get_component_with_raw_inner(state.inner().as_ref(), &id)
+}
+
+/// Return the bundled JSON Schema string for a `(tool, kind)` tuple,
+/// or `None` when no schema is bundled.
+///
+/// The Editor's form pane (Phase 3.3) parses the schema once on the JS
+/// side and uses it to map fields → input controls (`type: string` →
+/// `<input>`, `enum` → `<select>`, ...). Returning the schema as a raw
+/// string keeps the React side decoupled from `serde_json::Value` and
+/// matches the bundled-string shape inside the validator.
+#[tauri::command]
+pub fn get_validation_schema(tool: ToolId, kind: ComponentType) -> Option<String> {
+    schema_for_tuple(tool, kind).map(str::to_owned)
 }
 
 #[tauri::command]
@@ -775,6 +841,314 @@ pub fn security_summary_inner(handle: &IndexHandle) -> crate::index::Result<Secu
             suppressed,
         })
     })
+}
+
+// ─── Phase 3.3 - Editor save flow internals ─────────────────────────────
+
+/// Pure-function counterpart to [`save_component`]. Tests bypass the
+/// Tauri runtime by calling this directly; the override hook on the
+/// last argument lets them point the home-dir guard at a tmpdir.
+///
+/// `home_override` is a test seam - production code passes `None` and
+/// the safety guards consult the system HOME. Tests pass
+/// `Some(tmpdir)` so a fixture under `/tmp` doesn't trip the
+/// `OutsideHome` rule baked into `assert_safe_target`.
+pub fn save_component_inner(
+    handle: &IndexHandle,
+    id: &str,
+    content: &str,
+    original_hash: &str,
+    home_override: Option<&Path>,
+) -> crate::index::Result<SaveOutcome> {
+    // 1. Look up + classify the row. Resolve every variant (path,
+    //    tool, kind, format, descriptor) before doing any IO so we
+    //    can surface `Forbidden` early without partial work.
+    let resolved = match resolve_save_target(handle, id)? {
+        Ok(r) => r,
+        Err(outcome) => return Ok(outcome),
+    };
+
+    // 2. External-change check: if the bytes on disk no longer match
+    //    the snapshot the editor opened, return them so the UI can
+    //    surface a diff banner.
+    if let Some(outcome) = detect_external_change(&resolved.disk_path, original_hash)? {
+        return Ok(outcome);
+    }
+
+    // 3. Parse + validate the new content. A parse failure becomes a
+    //    single synthetic validation error so the React side has one
+    //    response shape to handle. Validation errors short-circuit
+    //    BEFORE we touch the atomic writer.
+    let parsed = match parse_bytes(content.as_bytes(), resolved.format) {
+        Ok(p) => p,
+        Err(err) => {
+            return Ok(SaveOutcome::ValidationFailed {
+                errors: vec![ValidationError {
+                    path: String::new(),
+                    message: err.to_string(),
+                    schema_keyword: "parse".to_owned(),
+                }],
+            });
+        }
+    };
+    let outcome = validate(&parsed, resolved.tool_id, resolved.component_type);
+    if !outcome.errors.is_empty() {
+        return Ok(SaveOutcome::ValidationFailed {
+            errors: outcome.errors,
+        });
+    }
+
+    // 4. Path safety + atomic write. The guard rejects forbidden
+    //    segments, symlink escapes, and writes outside any of the
+    //    descriptor's `watch_paths`.
+    let roots = resolve_descriptor_roots(resolved.descriptor, home_override);
+    let root_refs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
+    let allow_outside_home = home_override.is_some();
+    if let Err(err) = safe_atomic_write_with_options(
+        &resolved.disk_path,
+        content.as_bytes(),
+        &root_refs,
+        allow_outside_home,
+    ) {
+        return Ok(SaveOutcome::Forbidden {
+            reason: err.to_string(),
+        });
+    }
+
+    // 5. Re-index through the same upsert path the watcher uses, so
+    //    secret detection + validator + FTS body all converge on the
+    //    new bytes the same way they would for an external edit.
+    let Some(component_root) =
+        find_root_for_path(resolved.descriptor, &resolved.disk_path, home_override)
+    else {
+        return Ok(SaveOutcome::Forbidden {
+            reason: format!("no component root matches {}", resolved.disk_path.display()),
+        });
+    };
+    let component_name = component_name_for_path(&resolved.disk_path, &component_root);
+    upsert_component(
+        handle,
+        resolved.descriptor,
+        &component_root,
+        &resolved.disk_path,
+        &component_name,
+    )?;
+
+    Ok(SaveOutcome::Saved {
+        new_hash: parsed.hash.clone(),
+        mtime: file_mtime_secs(&resolved.disk_path),
+    })
+}
+
+/// Resolved save target: every typed value the rest of the pipeline
+/// needs after we've finished the index lookup + classification.
+struct ResolvedSaveTarget<'a> {
+    disk_path: PathBuf,
+    tool_id: ToolId,
+    component_type: ComponentType,
+    format: Format,
+    descriptor: &'a ToolDescriptor,
+}
+
+/// Look up the row + classify the on-wire enums. Returns either a
+/// [`ResolvedSaveTarget`] (Ok variant) or a short-circuit
+/// [`SaveOutcome::Forbidden`] (Err variant) - the inner Result is the
+/// `Result<crate::index::Result<...>>` that propagates `SQLite` errors.
+fn resolve_save_target<'a>(
+    handle: &IndexHandle,
+    id: &'a str,
+) -> crate::index::Result<std::result::Result<ResolvedSaveTarget<'a>, SaveOutcome>> {
+    let lookup: Option<SaveLookup> = handle.read(|conn| {
+        let row: Option<SaveLookup> = conn
+            .query_row(
+                "SELECT path, tool, type, format FROM component WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(SaveLookup {
+                        path: row.get::<_, String>(0)?,
+                        tool: row.get::<_, String>(1)?,
+                        kind: row.get::<_, String>(2)?,
+                        format: row.get::<_, String>(3)?,
+                    })
+                },
+            )
+            .map(Some)
+            .or_else(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        Ok(row)
+    })?;
+
+    let Some(lookup) = lookup else {
+        return Ok(Err(SaveOutcome::Forbidden {
+            reason: format!("component {id} not found"),
+        }));
+    };
+    let Some(tool_id) = parse_tool_id(&lookup.tool) else {
+        return Ok(Err(SaveOutcome::Forbidden {
+            reason: format!("unknown tool `{}` for {id}", lookup.tool),
+        }));
+    };
+    let Some(component_type) = parse_component_type(&lookup.kind) else {
+        return Ok(Err(SaveOutcome::Forbidden {
+            reason: format!("unknown component type `{}` for {id}", lookup.kind),
+        }));
+    };
+    let Some(format) = parse_format(&lookup.format) else {
+        return Ok(Err(SaveOutcome::Forbidden {
+            reason: format!("unknown format `{}` for {id}", lookup.format),
+        }));
+    };
+    let Some(descriptor) = registry_descriptors().iter().find(|d| d.id == tool_id) else {
+        return Ok(Err(SaveOutcome::Forbidden {
+            reason: format!("no descriptor for tool {tool_id:?}"),
+        }));
+    };
+
+    Ok(Ok(ResolvedSaveTarget {
+        disk_path: PathBuf::from(&lookup.path),
+        tool_id,
+        component_type,
+        format,
+        descriptor,
+    }))
+}
+
+/// Compare the on-disk hash with the editor's snapshot. Returns
+/// `Some(SaveOutcome::ExternalChange)` when they diverge, `None`
+/// otherwise. Files that don't exist yet (brand-new component) skip
+/// this check entirely; the safety guard handles unsafe targets later.
+fn detect_external_change(
+    disk_path: &Path,
+    original_hash: &str,
+) -> crate::index::Result<Option<SaveOutcome>> {
+    if !disk_path.exists() {
+        return Ok(None);
+    }
+    let disk_bytes = std::fs::read(disk_path).map_err(|err| {
+        crate::index::IndexError::Io(std::io::Error::new(
+            err.kind(),
+            format!("read {}: {err}", disk_path.display()),
+        ))
+    })?;
+    let disk_hash = hash::sha256_hex(&disk_bytes);
+    if disk_hash == original_hash {
+        return Ok(None);
+    }
+    // `from_utf8_lossy` keeps the diff banner useful even for
+    // non-UTF-8 files; lossy replacement chars are honest about what
+    // shipped to the user and prevent a `from_utf8` panic on binary
+    // payloads.
+    let current_content = String::from_utf8_lossy(&disk_bytes).into_owned();
+    Ok(Some(SaveOutcome::ExternalChange {
+        current_hash: disk_hash,
+        current_content,
+    }))
+}
+
+/// Stat `path` and return its mtime as a Unix-epoch seconds value, or
+/// `0` when the metadata is unavailable. Mirrors the rule used by
+/// `index::upsert::file_mtime`.
+fn file_mtime_secs(path: &Path) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
+}
+
+/// One-trip combined-detail lookup for the Editor open path.
+///
+/// Reads the component row, then reads the file off disk. Failures
+/// from the read path bubble out as the same typed `IpcError` that
+/// `read_component_raw` returns; failures on the index path collapse
+/// into `IpcError::Index` so the React side has a single error shape.
+pub fn get_component_with_raw_inner(
+    handle: &IndexHandle,
+    id: &str,
+) -> Result<Option<ComponentDetailWithRaw>, IpcError> {
+    let detail = get_component_inner(handle, id).map_err(|err| IpcError::Index {
+        message: err.to_string(),
+    })?;
+    let Some(detail) = detail else {
+        return Ok(None);
+    };
+
+    // Reuse the existing typed-error read path so size caps, NotFound,
+    // InvalidUtf8 etc. all surface verbatim.
+    let raw = read_component_raw_inner(handle, id)?;
+    let hash = hash::sha256_hex(raw.as_bytes());
+    Ok(Some(ComponentDetailWithRaw { detail, raw, hash }))
+}
+
+/// Row payload for the save-time component lookup. Tiny struct because
+/// the columns we need are few and we want named fields rather than a
+/// 4-tuple.
+struct SaveLookup {
+    path: String,
+    tool: String,
+    kind: String,
+    format: String,
+}
+
+/// Resolve a tool descriptor's `watch_paths` into absolute `PathBuf`s
+/// against the current (or overridden) HOME. Empty results just yield
+/// an empty roots slice - the safety guard then refuses the write
+/// because no root contains the target.
+fn resolve_descriptor_roots(
+    descriptor: &ToolDescriptor,
+    home_override: Option<&Path>,
+) -> Vec<PathBuf> {
+    let home = home_override.map(Path::to_path_buf).or_else(dirs::home_dir);
+    descriptor
+        .watch_paths
+        .iter()
+        .map(|raw| expand_home(raw, home.as_deref()))
+        .collect()
+}
+
+/// Find the `ComponentRoot` whose glob pattern covers `path`. Mirrors
+/// the classification logic but scoped to a single descriptor (we
+/// already know the tool from the index row).
+fn find_root_for_path(
+    descriptor: &ToolDescriptor,
+    path: &Path,
+    home_override: Option<&Path>,
+) -> Option<ComponentRoot> {
+    use globset::Glob;
+    let home = home_override.map(Path::to_path_buf).or_else(dirs::home_dir);
+    for root in &descriptor.component_roots {
+        let pattern = expand_home(&root.path_pattern, home.as_deref());
+        let Some(pattern_str) = pattern.to_str() else {
+            continue;
+        };
+        let Ok(glob) = Glob::new(pattern_str) else {
+            continue;
+        };
+        if glob.compile_matcher().is_match(path) {
+            return Some(root.clone());
+        }
+    }
+    None
+}
+
+/// Compute the component identity name for a path under a known root.
+/// Folder roots (e.g. `.../skills/foo/SKILL.md`) yield the parent
+/// directory name; file roots use the file stem.
+fn component_name_for_path(path: &Path, root: &ComponentRoot) -> String {
+    if root.is_folder {
+        if let Some(parent) = path.parent() {
+            if let Some(name) = parent.file_name() {
+                return name.to_string_lossy().into_owned();
+            }
+        }
+    }
+    path.file_stem().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    )
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -1504,5 +1878,292 @@ mod tests {
         assert_eq!(summary.by_category.secret, 1);
         assert_eq!(summary.by_category.mcp_permission, 1);
         assert_eq!(summary.suppressed, 1);
+    }
+
+    // ─── Phase 3.3 - save_component / get_component_with_raw ────────────
+
+    /// Build a Claude Code descriptor whose `watch_paths` and skill
+    /// root are rooted under `home` rather than `~/`. Tests use this
+    /// so the in-memory descriptor matches what the safety guard
+    /// canonicalises against (a real tmpdir).
+    fn home_rooted_claude_descriptor(home: &std::path::Path) -> ToolDescriptor {
+        let mut descriptor = crate::registry::tools::claude_code();
+        let claude = home.join(".claude");
+        descriptor.watch_paths = vec![
+            claude.to_string_lossy().into_owned(),
+            home.join(".claude.json").to_string_lossy().into_owned(),
+        ];
+        for root in &mut descriptor.component_roots {
+            root.path_pattern =
+                root.path_pattern
+                    .replacen("~/", &format!("{}/", home.display()), 1);
+        }
+        descriptor
+    }
+
+    /// Seed a Claude Code skill on disk + index, returning the
+    /// component id and absolute path. `body` controls the post-
+    /// frontmatter text so tests can drive the parser through valid
+    /// and invalid shapes.
+    fn seed_skill_for_save(
+        handle: &IndexHandle,
+        home: &std::path::Path,
+        name: &str,
+        body: &str,
+    ) -> (String, std::path::PathBuf) {
+        let descriptor = home_rooted_claude_descriptor(home);
+        let dir = home.join(".claude").join("skills").join(name);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("SKILL.md");
+        fs::write(
+            &path,
+            format!("---\nname: {name}\ndescription: {name} skill\n---\n{body}"),
+        )
+        .expect("write");
+        let root = descriptor
+            .component_roots
+            .iter()
+            .find(|r| r.component_type == ComponentType::Skill)
+            .expect("skill root");
+        let outcome = upsert_component(handle, &descriptor, root, &path, name).expect("upsert");
+        (outcome.id, path)
+    }
+
+    #[test]
+    fn save_component_writes_atomically_and_reindexes() {
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let (id, path) = seed_skill_for_save(&handle, home.path(), "alpha", "first body\n");
+
+        // Capture the original on-disk hash so the save guards pass.
+        let original_bytes = fs::read(&path).expect("read original");
+        let original_hash = crate::parser::hash::sha256_hex(&original_bytes);
+
+        let new_content = "---\nname: alpha\ndescription: updated skill\n---\nrewritten body\n";
+        let outcome =
+            save_component_inner(&handle, &id, new_content, &original_hash, Some(home.path()))
+                .expect("save");
+
+        match outcome {
+            SaveOutcome::Saved { new_hash, .. } => {
+                let on_disk = fs::read_to_string(&path).expect("read after save");
+                assert_eq!(on_disk, new_content);
+                assert_eq!(
+                    new_hash,
+                    crate::parser::hash::sha256_hex(new_content.as_bytes())
+                );
+            }
+            other => panic!("expected Saved, got {other:?}"),
+        }
+
+        // Index reflects the rewritten description.
+        let detail = get_component_inner(&handle, &id)
+            .expect("detail")
+            .expect("must exist");
+        assert_eq!(detail.summary.description.as_deref(), Some("updated skill"));
+    }
+
+    #[test]
+    fn save_component_rejects_external_change() {
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let (id, path) = seed_skill_for_save(&handle, home.path(), "beta", "original body\n");
+
+        // Pretend the user opened the editor on the original
+        // contents but a third party modified the file between open
+        // and save.
+        let original_bytes = fs::read(&path).expect("read original");
+        let stale_hash = crate::parser::hash::sha256_hex(&original_bytes);
+        fs::write(
+            &path,
+            "---\nname: beta\ndescription: external edit\n---\nthird-party body\n",
+        )
+        .expect("external write");
+
+        let new_content = "---\nname: beta\ndescription: my edit\n---\nmine\n";
+        let outcome =
+            save_component_inner(&handle, &id, new_content, &stale_hash, Some(home.path()))
+                .expect("save");
+
+        match outcome {
+            SaveOutcome::ExternalChange {
+                current_hash,
+                current_content,
+            } => {
+                let on_disk = fs::read(&path).expect("read");
+                assert_eq!(current_hash, crate::parser::hash::sha256_hex(&on_disk));
+                assert!(
+                    current_content.contains("third-party body"),
+                    "current_content should reflect the external edit, got: {current_content}"
+                );
+                // The original file was NOT overwritten by our save
+                // attempt - we surfaced the conflict instead.
+                assert!(!on_disk.starts_with(b"---\nname: beta\ndescription: my edit"));
+            }
+            other => panic!("expected ExternalChange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_component_returns_validation_errors() {
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let (id, path) = seed_skill_for_save(&handle, home.path(), "gamma", "good body\n");
+
+        let original_bytes = fs::read(&path).expect("read original");
+        let original_hash = crate::parser::hash::sha256_hex(&original_bytes);
+
+        // Drop the required `description` from the frontmatter; the
+        // bundled Claude Code skill schema marks it required.
+        let bad_content = "---\nname: gamma\n---\nstill has body\n";
+        let outcome =
+            save_component_inner(&handle, &id, bad_content, &original_hash, Some(home.path()))
+                .expect("save");
+
+        match outcome {
+            SaveOutcome::ValidationFailed { errors } => {
+                assert!(
+                    errors.iter().any(|e| e.schema_keyword == "required"),
+                    "expected required error, got {errors:?}"
+                );
+                // File must be unchanged on disk - validation failures
+                // never write.
+                let on_disk = fs::read(&path).expect("read");
+                assert_eq!(on_disk, original_bytes);
+            }
+            other => panic!("expected ValidationFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_component_blocks_path_escape() {
+        // Stage a component whose indexed path lives OUTSIDE the
+        // descriptor's watch_paths. The save must refuse with
+        // Forbidden rather than silently writing into a stranger's
+        // directory.
+        let home = tempdir().expect("tempdir");
+        let elsewhere = tempdir().expect("elsewhere");
+        let handle = IndexHandle::open_in_memory().expect("open");
+
+        // Seed a real component first so the index has the row.
+        let (id, real_path) = seed_skill_for_save(&handle, home.path(), "delta", "body\n");
+
+        // Now relocate the row's `path` column to a file outside any
+        // tool root. We manipulate the index directly because no
+        // legitimate code path produces this state - it's a synthetic
+        // adversarial case to exercise the safety guard.
+        let bogus = elsewhere.path().join("evil.md");
+        fs::create_dir_all(elsewhere.path()).ok();
+        fs::write(&bogus, "---\nname: delta\ndescription: x\n---\noriginal\n").expect("seed bogus");
+        let bogus_str = bogus.to_string_lossy().into_owned();
+        handle
+            .write(|conn| {
+                conn.execute(
+                    "UPDATE component SET path = ?1 WHERE id = ?2",
+                    rusqlite::params![bogus_str, id],
+                )?;
+                Ok(())
+            })
+            .expect("relocate");
+
+        let original_hash = crate::parser::hash::sha256_hex(&fs::read(&bogus).expect("read bogus"));
+        let new_content = "---\nname: delta\ndescription: y\n---\nrewritten\n";
+        let outcome =
+            save_component_inner(&handle, &id, new_content, &original_hash, Some(home.path()))
+                .expect("save");
+
+        match outcome {
+            SaveOutcome::Forbidden { reason } => {
+                assert!(!reason.is_empty(), "reason must be human-readable");
+            }
+            other => panic!("expected Forbidden, got {other:?}"),
+        }
+
+        // The legitimate skill file under `home` must NOT have been
+        // touched by the rejected save.
+        let untouched = fs::read_to_string(&real_path).expect("read real");
+        assert!(untouched.contains("body"));
+    }
+
+    #[test]
+    fn get_component_with_raw_bundles_detail_and_bytes() {
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let (id, path) = seed_skill_for_save(&handle, home.path(), "epsilon", "body!\n");
+        let on_disk = fs::read_to_string(&path).expect("read");
+
+        let bundle = get_component_with_raw_inner(&handle, &id)
+            .expect("ok")
+            .expect("must exist");
+        assert_eq!(bundle.detail.summary.name, "epsilon");
+        assert_eq!(bundle.raw, on_disk);
+        assert_eq!(
+            bundle.hash,
+            crate::parser::hash::sha256_hex(on_disk.as_bytes())
+        );
+
+        // Missing id yields Ok(None) rather than an error.
+        let missing = get_component_with_raw_inner(&handle, "aseye://nope/x/y/z").expect("ok");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn save_outcome_serialises_camel_case_on_the_wire() {
+        // Regression guard for the `kind: ...` discriminator + camelCase
+        // field names. ts-rs generates the TS bindings, but the runtime
+        // wire format is decided by serde - which means the binding and
+        // the actual JSON have to agree. Pin both in one assertion so a
+        // future serde rename breaks loudly here rather than silently
+        // in the React layer.
+        let saved = SaveOutcome::Saved {
+            new_hash: "abc".to_owned(),
+            mtime: 42,
+        };
+        let s = serde_json::to_string(&saved).expect("serialise");
+        assert!(s.contains("\"kind\":\"saved\""), "got: {s}");
+        assert!(s.contains("\"newHash\":\"abc\""), "got: {s}");
+        assert!(s.contains("\"mtime\":42"), "got: {s}");
+
+        let ext = SaveOutcome::ExternalChange {
+            current_hash: "def".to_owned(),
+            current_content: "x".to_owned(),
+        };
+        let s = serde_json::to_string(&ext).expect("serialise");
+        assert!(s.contains("\"kind\":\"externalChange\""), "got: {s}");
+        assert!(s.contains("\"currentHash\":\"def\""), "got: {s}");
+        assert!(s.contains("\"currentContent\":\"x\""), "got: {s}");
+    }
+
+    #[test]
+    fn save_component_recovers_when_external_change_is_acked() {
+        // Round-trip the conflict resolution: first attempt returns
+        // ExternalChange, the caller re-issues with the new hash, the
+        // second attempt saves.
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let (id, path) = seed_skill_for_save(&handle, home.path(), "zeta", "body\n");
+
+        let stale_bytes = fs::read(&path).expect("read");
+        let stale_hash = crate::parser::hash::sha256_hex(&stale_bytes);
+        let external = "---\nname: zeta\ndescription: ext\n---\next body\n";
+        fs::write(&path, external).expect("ext write");
+
+        let new_content = "---\nname: zeta\ndescription: mine\n---\nfinal\n";
+        let first = save_component_inner(&handle, &id, new_content, &stale_hash, Some(home.path()))
+            .expect("first");
+        let SaveOutcome::ExternalChange { current_hash, .. } = first else {
+            panic!("expected ExternalChange");
+        };
+
+        let second =
+            save_component_inner(&handle, &id, new_content, &current_hash, Some(home.path()))
+                .expect("second");
+        match second {
+            SaveOutcome::Saved { .. } => {
+                let on_disk = fs::read_to_string(&path).expect("read");
+                assert_eq!(on_disk, new_content);
+            }
+            other => panic!("expected Saved on retry, got {other:?}"),
+        }
     }
 }

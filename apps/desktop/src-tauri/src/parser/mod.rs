@@ -296,11 +296,16 @@ mod proptests {
     //! Inputs are kept small and well-typed (string / int / bool keys
     //! and values) so the proptest shrinker can produce useful
     //! counterexamples without combinatorial explosion.
+    //!
+    //! Phase 5.1 raises the case count from 64 to 256 across the four
+    //! round-trip properties (markdown frontmatter, JSON, TOML, YAML)
+    //! so we exercise the full body of the proptest default rather
+    //! than the minimum-viable count Phase 1.4 ran.
 
     use proptest::prelude::*;
 
     use super::{parse_bytes, MAX_PARSE_SIZE};
-    use crate::parser::markdown;
+    use crate::parser::{json as json_parser, markdown, toml as toml_parser};
     use crate::registry::types::Format;
 
     /// Strategy: small map of `key: value` where values are scalar.
@@ -324,11 +329,36 @@ mod proptests {
         })
     }
 
+    /// Strategy: small map suitable for TOML emission.
+    ///
+    /// TOML rejects bare integers that don't fit in `i64` and forbids
+    /// the empty string as a bare key. We constrain values to
+    /// `(bool | i32 | non-empty ascii string)` to stay inside what the
+    /// `toml` crate's serialiser accepts, which means we are testing
+    /// *our* parser, not the upstream emitter's edge cases.
+    fn small_toml_map() -> impl Strategy<Value = serde_json::Value> {
+        let key = "[a-z][a-z0-9_]{0,7}";
+        let val = prop_oneof![
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i32>().prop_map(|i| serde_json::Value::Number(i.into())),
+            // TOML strings can hold arbitrary printable ASCII; we keep
+            // it tame so quoting doesn't introduce ambiguity.
+            "[a-z0-9_ ]{1,16}".prop_map(serde_json::Value::String),
+        ];
+        prop::collection::btree_map(key, val, 1..6).prop_map(|m| {
+            let mut obj = serde_json::Map::new();
+            for (k, v) in m {
+                obj.insert(k, v);
+            }
+            serde_json::Value::Object(obj)
+        })
+    }
+
     proptest! {
-        // Reduce the case count from the proptest default (256) to
-        // keep the test snappy in CI - the round-trip property
-        // doesn't need extensive exploration to be valuable.
-        #![proptest_config(ProptestConfig::with_cases(64))]
+        // 256 cases matches the proptest default. Phase 1.4 used 64;
+        // Phase 5.1 raises this to give the shrinker more room while
+        // still finishing under a second per property on a modern CPU.
+        #![proptest_config(ProptestConfig::with_cases(256))]
 
         /// `serde_yaml::to_string` -> `parse(Format::Yaml)` must yield
         /// a value structurally equal to the input.
@@ -370,6 +400,56 @@ mod proptests {
             let got_fm = doc.frontmatter.expect("frontmatter present");
             prop_assert_eq!(got_fm, fm);
             prop_assert_eq!(doc.body, body);
+        }
+
+        /// JSON parse -> re-serialise -> parse: the value must be
+        /// equal across both parses. We hand the parser the textual
+        /// form `serde_json` produces, parse, re-emit, and parse
+        /// again; both parsed values must be equal to the original.
+        ///
+        /// Tests *our* JSON dispatcher, not `serde_json` itself: any
+        /// regression that swaps key ordering or normalises numbers
+        /// would surface here.
+        #[test]
+        fn proptest_json_roundtrip(value in small_yaml_map()) {
+            let text = serde_json::to_string(&value).expect("emit");
+            prop_assume!(text.len() as u64 <= MAX_PARSE_SIZE);
+
+            let first = json_parser::parse(text.as_bytes()).expect("first parse");
+            prop_assert_eq!(first.clone(), value.clone());
+
+            let reemit = serde_json::to_string(&first).expect("re-emit");
+            let second = json_parser::parse(reemit.as_bytes()).expect("second parse");
+            prop_assert_eq!(second, value);
+        }
+
+        /// TOML parse -> JSON projection -> JSON parse: the projection
+        /// must round-trip through the JSON parser. This exercises
+        /// `toml_to_json` (the conversion function inside the TOML
+        /// parser) by composing it with our JSON parser.
+        ///
+        /// Equivalent to: emit TOML -> our TOML parser -> JSON value
+        /// -> serde_json emit -> our JSON parser -> structurally
+        /// equal value.
+        #[test]
+        fn proptest_toml_json_projection_roundtrip(value in small_toml_map()) {
+            // Emit as TOML. The `toml` crate's `to_string` rejects
+            // arrays of tables at the top level (which we don't
+            // generate) and other shapes our strategy excludes.
+            // If the upstream emitter refuses (extremely rare for this
+            // strategy), drop the case rather than fail - we're testing
+            // our parser, not the emitter.
+            let Ok(text) = ::toml::to_string(&value) else {
+                return Ok(());
+            };
+            prop_assume!(text.len() as u64 <= MAX_PARSE_SIZE);
+
+            let toml_parsed = toml_parser::parse(text.as_bytes()).expect("toml parse");
+            // Project through JSON: emit, re-parse with our JSON
+            // dispatcher, compare to the original.
+            let projected = serde_json::to_string(&toml_parsed).expect("project to json");
+            let json_parsed = json_parser::parse(projected.as_bytes()).expect("json parse");
+            prop_assert_eq!(json_parsed, value);
         }
     }
 }

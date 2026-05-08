@@ -20,34 +20,42 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ComponentDetail,
+  ComponentDetailWithRaw,
   ComponentFilter,
   ComponentFindingsCount,
   ComponentSummary,
+  ComponentType,
   DetectedTool,
   FindingSummary,
   HealthSummary,
   IpcError,
+  SaveOutcome,
   ScanReport,
   SearchQuery,
   SearchResult,
   SecurityFilter,
   SecuritySummary,
+  ToolId,
 } from "@aseye/shared-types";
 
 export type {
   ComponentDetail,
+  ComponentDetailWithRaw,
   ComponentFilter,
   ComponentFindingsCount,
   ComponentSummary,
+  ComponentType,
   DetectedTool,
   FindingSummary,
   HealthSummary,
   IpcError,
+  SaveOutcome,
   ScanReport,
   SearchQuery,
   SearchResult,
   SecurityFilter,
   SecuritySummary,
+  ToolId,
 };
 
 /** Probe the host system for the tools we know about. */
@@ -145,4 +153,47 @@ export async function getFindingsCountPerComponent(): Promise<
 /** Aggregate counts (severity, category, suppressed) for the Sidebar Health row + Security view header. */
 export async function getSecuritySummary(): Promise<SecuritySummary> {
   return invoke<SecuritySummary>("get_security_summary");
+}
+
+// ─── Phase 3.3 - Editor save flow ─────────────────────────────────────
+
+/**
+ * One-trip Editor open: returns the parsed detail and the raw on-disk
+ * bytes plus a SHA-256 snapshot the editor hands back on save to gate
+ * external-change detection.
+ */
+export async function getComponentWithRaw(
+  id: string,
+): Promise<ComponentDetailWithRaw | null> {
+  return invoke<ComponentDetailWithRaw | null>("get_component_with_raw", { id });
+}
+
+/**
+ * Save the editor's buffer back to disk through the atomic writer.
+ * `originalHash` is the snapshot the editor opened with; the backend
+ * compares it against the on-disk hash and returns
+ * `SaveOutcome::ExternalChange` when they diverge.
+ */
+export async function saveComponent(
+  id: string,
+  content: string,
+  originalHash: string,
+): Promise<SaveOutcome> {
+  return invoke<SaveOutcome>("save_component", {
+    id,
+    content,
+    originalHash,
+  });
+}
+
+/**
+ * Bundled JSON Schema text for a `(tool, kind)` tuple, or `null` when
+ * no schema is bundled. The Editor form pane parses this once on
+ * mount and uses it to drive input rendering.
+ */
+export async function getValidationSchema(
+  tool: ToolId,
+  kind: ComponentType,
+): Promise<string | null> {
+  return invoke<string | null>("get_validation_schema", { tool, kind });
 }
