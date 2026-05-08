@@ -19,8 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - macos-14      # arm64
-          - macos-13      # x64
+          - macos-14         # arm64
+          - macos-15-intel   # x64 (macos-13 was retired Dec 2025)
           - ubuntu-latest
           - windows-latest
 
