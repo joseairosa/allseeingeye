@@ -25,6 +25,7 @@
 
 pub mod error;
 pub mod finding;
+pub mod mcp_audit;
 pub mod patterns;
 pub mod scanner;
 
@@ -75,13 +76,23 @@ pub fn persist_findings(
         if suppressed.iter().any(|p| p == &finding.pattern) {
             continue;
         }
+        // Phase 7.2: serialise the optional evidence object into the
+        // `evidence_json` column. Phase 7.1 secret findings carry
+        // `evidence = None` and write SQL NULL, which round-trips back
+        // through the (currently unused) read path the same way.
+        let evidence_json: Option<String> = match finding.evidence.as_ref() {
+            Some(value) => Some(serde_json::to_string(value).map_err(|err| {
+                SecurityError::Internal(format!("serialise evidence_json: {err}"))
+            })?),
+            None => None,
+        };
         conn.execute(
             "INSERT INTO security_finding (
                 id, component_id, category, pattern, severity, file_path,
                 line, source_label, redacted_preview, detected_at,
-                suppressed, suppress_reason, suppress_until
+                suppressed, suppress_reason, suppress_until, evidence_json
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, NULL, NULL
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, NULL, NULL, ?11
              )
              ON CONFLICT(id) DO NOTHING",
             params![
@@ -95,10 +106,52 @@ pub fn persist_findings(
                 finding.source_label,
                 finding.redacted_preview,
                 finding.detected_at,
+                evidence_json,
             ],
         )?;
     }
     Ok(())
+}
+
+/// Read back a single finding's evidence blob. Used by Phase 7.2 tests
+/// to assert evidence round-trips; no IPC consumer surfaces this in
+/// Phase 7.2 (UI surface lands in 7.3).
+///
+/// Returns `Ok(None)` when the row exists but `evidence_json IS NULL`,
+/// `Ok(Some(value))` when it parses, or `SecurityError::Internal` when
+/// the column holds malformed JSON. Returns `Ok(None)` and emits a
+/// debug log when the row id doesn't exist.
+///
+/// Marked `allow(dead_code)` because the only consumers right now are
+/// the tests in this module and `mcp_audit`. The Phase 7.3 Security
+/// IPC commands will join over the column directly rather than
+/// calling this helper, so it stays test-only - but kept in the
+/// public API surface so future audit categories can reuse it without
+/// re-deriving the read path.
+#[allow(dead_code)]
+pub fn load_finding_evidence(
+    conn: &Connection,
+    finding_id: &str,
+) -> Result<Option<serde_json::Value>> {
+    let row: Option<Option<String>> = conn
+        .query_row(
+            "SELECT evidence_json FROM security_finding WHERE id = ?1",
+            params![finding_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok();
+    let Some(payload) = row else {
+        return Ok(None);
+    };
+    let Some(json) = payload else {
+        return Ok(None);
+    };
+    let value = serde_json::from_str(&json).map_err(|err| {
+        SecurityError::Internal(format!(
+            "evidence_json parse failed for {finding_id}: {err}"
+        ))
+    })?;
+    Ok(Some(value))
 }
 
 #[cfg(test)]
@@ -136,6 +189,7 @@ mod tests {
             line: Some(1),
             redacted_preview: "abcd\u{2026}wxyz".to_owned(),
             detected_at: 0,
+            evidence: None,
         }
     }
 

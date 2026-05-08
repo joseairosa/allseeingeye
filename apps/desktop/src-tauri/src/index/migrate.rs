@@ -50,10 +50,25 @@ const V2_SECURITY_TABLES: &[&str] = &[
     schema::CREATE_SECURITY_FINDING_SUPPRESSION,
 ];
 
+/// Phase 7.2 migration: add the `evidence_json` column to
+/// `security_finding`. Nullable, defaults to NULL - existing Phase 7.1
+/// secret rows stay NULL on upgrade, while Phase 7.2 MCP-permission
+/// findings populate it with a small structured object (host +
+/// database for Postgres, repo scope for GitHub, etc.).
+///
+/// `ALTER TABLE ... ADD COLUMN` in `SQLite` is an in-place metadata
+/// change - no row rewrite, no extra storage cost on existing rows.
+const V3_FINDING_EVIDENCE: &[&str] =
+    &["ALTER TABLE security_finding ADD COLUMN evidence_json TEXT;"];
+
 /// Registered migrations. Keep sorted ascending by version. The runner
 /// refuses to open a DB whose stored version is higher than the maximum
 /// here - that means a future build wrote it.
-const MIGRATIONS: &[(u32, &[&str])] = &[(1, V1_BOOTSTRAP), (2, V2_SECURITY_TABLES)];
+const MIGRATIONS: &[(u32, &[&str])] = &[
+    (1, V1_BOOTSTRAP),
+    (2, V2_SECURITY_TABLES),
+    (3, V3_FINDING_EVIDENCE),
+];
 
 /// Highest migration version known to this build.
 #[must_use]
@@ -243,11 +258,17 @@ mod tests {
         // doctest for `migrate_clean_database` covers presence; this
         // test pins the column shape so future migrations don't drift
         // it without a notice.
+        //
+        // We assert against `latest_version()` rather than a literal
+        // (e.g. 2) because each new migration would otherwise force a
+        // hand-edit of every test that pinned the version - the gate
+        // we actually care about is "all v1+v2 columns are present
+        // after running migrations to the head".
         let mut conn = fresh_in_memory();
         let v = run_migrations(&mut conn).expect("migrate");
-        assert_eq!(v, 2);
+        assert_eq!(v, latest_version());
 
-        // `security_finding` columns.
+        // `security_finding` columns expected from v2 onwards.
         let mut stmt = conn.prepare("PRAGMA table_info(security_finding)").unwrap();
         let cols: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))
@@ -290,5 +311,84 @@ mod tests {
                 "expected column {col} on security_finding_suppression, got {cols:?}"
             );
         }
+    }
+
+    #[test]
+    fn migration_v3_adds_evidence_column() {
+        // Phase 7.2: a fresh DB at `latest_version` has the
+        // `evidence_json` column on `security_finding`. We don't pin
+        // the literal version number - the assertion is that v3
+        // landed (the column exists) and that running migrations to
+        // the head of the chain is idempotent.
+        let mut conn = fresh_in_memory();
+        let v = run_migrations(&mut conn).expect("migrate");
+        assert!(
+            v >= 3,
+            "expected migrations to advance past v3, got {v} (latest = {})",
+            latest_version()
+        );
+
+        let mut stmt = conn.prepare("PRAGMA table_info(security_finding)").unwrap();
+        let cols: Vec<(String, String, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?, // name
+                    row.get::<_, String>(2)?, // type
+                    row.get::<_, i64>(3)?,    // notnull (0 = nullable)
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        let evidence = cols
+            .iter()
+            .find(|(name, _, _)| name == "evidence_json")
+            .expect("expected evidence_json column to exist");
+        assert_eq!(evidence.1, "TEXT", "evidence_json must be TEXT");
+        assert_eq!(evidence.2, 0, "evidence_json must be nullable");
+    }
+
+    #[test]
+    fn migration_v2_to_v3_upgrade_path() {
+        // Sanity-check the upgrade path: an existing DB at v2
+        // (simulated by running v1 + v2 manually and stamping the
+        // version) advances to v3 without rewriting existing rows.
+        let mut conn = fresh_in_memory();
+        // Bootstrap to v2 by running migrations once and rolling back
+        // the version to 2 - simpler than re-running the v1 + v2 SQL
+        // by hand.
+        let _ = run_migrations(&mut conn).expect("initial migrate");
+        conn.execute("DELETE FROM schema_version", []).unwrap();
+        conn.execute("INSERT INTO schema_version (version) VALUES (2)", [])
+            .unwrap();
+        // Drop the v3 column so the simulated v2 schema is column-
+        // accurate (otherwise the second `run_migrations` would not
+        // re-apply v3 since we deleted only the version row).
+        conn.execute_batch(
+            "CREATE TABLE security_finding_old AS SELECT
+                 id, component_id, category, pattern, severity, file_path,
+                 line, source_label, redacted_preview, detected_at,
+                 suppressed, suppress_reason, suppress_until
+             FROM security_finding;
+             DROP TABLE security_finding;
+             ALTER TABLE security_finding_old RENAME TO security_finding;",
+        )
+        .unwrap();
+
+        // Now upgrade. The migration runner must apply v3 only.
+        let v = run_migrations(&mut conn).expect("upgrade");
+        assert_eq!(v, latest_version());
+
+        // The new column exists and is nullable.
+        let mut stmt = conn.prepare("PRAGMA table_info(security_finding)").unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(
+            names.iter().any(|n| n == "evidence_json"),
+            "evidence_json missing after v2 -> v3 upgrade: {names:?}"
+        );
     }
 }

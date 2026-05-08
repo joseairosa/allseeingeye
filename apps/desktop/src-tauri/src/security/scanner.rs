@@ -267,6 +267,11 @@ fn build_finding(
         line,
         redacted_preview: redact(value),
         detected_at,
+        // Phase 7.1 secret findings leave evidence empty - the
+        // pattern + redacted preview + source label triple already
+        // fully describes the match. Phase 7.2 MCP findings populate
+        // this field via `mcp_audit::audit_mcp_component`.
+        evidence: None,
     }
 }
 

@@ -25,7 +25,7 @@ use ts_rs::TS;
 use super::error::{IndexError, Result};
 use super::IndexHandle;
 use crate::parser::{parse_file, ParseError, ParsedComponent};
-use crate::registry::types::{ComponentRoot, ComponentType, Scope, ToolDescriptor, ToolId};
+use crate::registry::types::{ComponentRoot, ComponentType, Format, Scope, ToolDescriptor, ToolId};
 use crate::security;
 
 /// Outcome of an `upsert_component` call.
@@ -215,7 +215,17 @@ fn write_parsed(
     // (Phase 7.3): a row in `security_finding_suppression` for
     // `(component_id, pattern)` prevents the finding from being
     // re-inserted on subsequent upserts.
-    let findings = security::scan_parsed(parsed);
+    let mut findings = security::scan_parsed(parsed);
+
+    // Phase 7.2: MCP permission audit. Scoped to MCP components whose
+    // structured value is a parseable data format (JSON/TOML/YAML);
+    // markdown skills + binary blobs do not have an MCP server shape
+    // and the audit returns empty for them, but the explicit gate
+    // skips a no-op call entirely.
+    if root.component_type == ComponentType::Mcp && is_data_format(root.format) {
+        findings.extend(security::mcp_audit::audit_mcp_component(parsed));
+    }
+
     if !findings.is_empty() {
         if let Err(err) = security::persist_findings(conn, id, &path_str, &findings) {
             tracing::debug!(
@@ -494,6 +504,15 @@ fn file_role(root: &ComponentRoot) -> &'static str {
     }
 }
 
+/// Phase 7.2: only data formats (`JSON` / `TOML` / `YAML`) carry the
+/// structured MCP shape the audit reasons over. Markdown/MDC bodies
+/// can mention an MCP server in prose but never describe its
+/// configuration in a typed way, so we skip the audit entirely for
+/// non-data formats.
+fn is_data_format(format: Format) -> bool {
+    matches!(format, Format::Json | Format::Toml | Format::Yaml)
+}
+
 // String conversions kept in this module so the wire format used in
 // `component.*` columns stays consistent across reads and writes. The
 // canonical mapping mirrors the `serde(rename_all = "...")` attributes
@@ -580,8 +599,7 @@ pub(crate) fn parse_scope(s: &str) -> Option<Scope> {
     }
 }
 
-pub(crate) fn format_to_str(f: crate::registry::types::Format) -> &'static str {
-    use crate::registry::types::Format;
+pub(crate) fn format_to_str(f: Format) -> &'static str {
     match f {
         Format::Json => "json",
         Format::Toml => "toml",

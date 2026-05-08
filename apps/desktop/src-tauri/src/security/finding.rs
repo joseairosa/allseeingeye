@@ -53,10 +53,11 @@ impl Severity {
     }
 }
 
-/// Audit category. Phase 7.1 ships only `Secret`; Phase 7.2 adds
-/// `McpPermission`, Phase 7.3 adds `Hook` / `Plugin` / `PathTraversal` /
-/// `SensitiveDir` / `License`. The variant is open-ended so future work
-/// can extend without breaking serialised rows.
+/// Audit category. Phase 7.1 ships `Secret`; Phase 7.2 adds
+/// `McpPermission`. Phase 7.3 will add `Hook` / `Plugin` /
+/// `PathTraversal` / `SensitiveDir` / `License`. The variant is
+/// open-ended so future work can extend without breaking serialised
+/// rows.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export, export_to = "../bindings/security/Category.ts")]
@@ -64,14 +65,22 @@ impl Severity {
 pub enum Category {
     /// `docs/12-security.md` Section A. Secret exposure.
     Secret,
+    /// `docs/12-security.md` Section B. MCP server permission posture.
+    /// Inferred from the indexed MCP configuration shape - never from
+    /// runtime probing.
+    McpPermission,
 }
 
 impl Category {
     /// Wire-compatible label for the SQL `category` column.
+    ///
+    /// The kebab-case form mirrors the `serde(rename_all = "kebab-case")`
+    /// attribute so reads converge with writes.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Secret => "secret",
+            Self::McpPermission => "mcp-permission",
         }
     }
 }
@@ -113,6 +122,21 @@ pub struct Finding {
     pub redacted_preview: String,
     /// Unix epoch milliseconds when the finding was detected.
     pub detected_at: i64,
+    /// Structured evidence captured by the audit rule.
+    ///
+    /// Phase 7.1 secret findings leave this as `None` - their
+    /// (`pattern`, `redacted_preview`, `source_label`) triple already
+    /// fully describes the match.
+    ///
+    /// Phase 7.2 MCP permission findings populate it with a small JSON
+    /// object describing the inferred posture (e.g. host + database for
+    /// Postgres, repo scope for GitHub, package name for filesystem).
+    /// This stays out of the secret path - no credentials, no full
+    /// connection strings, no token values.
+    ///
+    /// Wire form: an `unknown | null` on the TS side via `ts-rs`'s
+    /// `serde-json-impl` feature.
+    pub evidence: Option<serde_json::Value>,
 }
 
 /// Build the redacted preview for a matched secret value.
@@ -166,8 +190,24 @@ mod tests {
     }
 
     #[test]
-    fn category_as_str_secret() {
-        assert_eq!(Category::Secret.as_str(), "secret");
+    fn category_as_str_round_trip() {
+        // Wire-label round-trip: every variant produces a stable
+        // kebab-case string that the SQL column uses verbatim. Adding
+        // a variant without updating this test is a compile error
+        // (the `match` is exhaustive in `as_str`) and a behavioural
+        // gap if its label is empty.
+        for (cat, want) in [
+            (Category::Secret, "secret"),
+            (Category::McpPermission, "mcp-permission"),
+        ] {
+            assert_eq!(cat.as_str(), want);
+            // Mirror the serde wire format - the JSON tag for the
+            // variant must match `as_str`.
+            let json = serde_json::to_string(&cat).expect("serialise");
+            assert_eq!(json, format!("\"{want}\""));
+            let back: Category = serde_json::from_str(&json).expect("deserialise");
+            assert_eq!(back, cat);
+        }
     }
 
     #[test]
