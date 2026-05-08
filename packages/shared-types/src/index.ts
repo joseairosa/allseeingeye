@@ -1,30 +1,18 @@
-// Phase 1.1+ generates types here from Rust via ts-rs / specta.
-// Hand-rolled stubs live here only until generation is wired.
+// Generated TS bindings live in apps/desktop/src-tauri/bindings/.
+// `ts-rs` regenerates them on `cargo test`; never hand-edit.
+//
+// Phase 1.1 ships the registry surface; later phases extend this barrel.
 
-export type ToolId =
-  | "claude-code"
-  | "codex"
-  | "cursor"
-  | "antigravity";
+export type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";
+export type { ComponentType } from "../../../apps/desktop/src-tauri/bindings/registry/ComponentType";
+export type { Scope } from "../../../apps/desktop/src-tauri/bindings/registry/Scope";
+export type { Format } from "../../../apps/desktop/src-tauri/bindings/registry/Format";
+export type { ComponentRoot } from "../../../apps/desktop/src-tauri/bindings/registry/ComponentRoot";
+export type { ToolDescriptor } from "../../../apps/desktop/src-tauri/bindings/registry/ToolDescriptor";
+export type { DetectedTool } from "../../../apps/desktop/src-tauri/bindings/registry/DetectedTool";
 
-export type ComponentType =
-  | "settings"
-  | "memory"
-  | "rule"
-  | "skill"
-  | "command"
-  | "agent"
-  | "mcp"
-  | "hook"
-  | "plugin"
-  | "marketplace"
-  | "session"
-  | "task"
-  | "outputStyle"
-  | "statusline"
-  | "permission";
-
-export type Scope = "user" | "project" | "enterprise" | "plugin";
+// Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
+import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";
 
 export interface ToolSummary {
   id: ToolId;
