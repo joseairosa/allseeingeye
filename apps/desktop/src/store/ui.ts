@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 export type ViewId =
   | "inventory"
@@ -70,66 +71,115 @@ export interface UiState {
   togglePanicMode: (force?: boolean) => void;
 }
 
-export const useUi = create<UiState>((set) => ({
-  view: "inventory",
-  theme: "dark",
-  density: "comfortable",
-  search: "type:skill tool:claude-code",
-  selectedComponentId: "spec",
-  paletteOpen: false,
-  quickLookOpen: false,
-  onboardingOpen: false,
-  panicMode: false,
-  panicModeLastToggledAt: null,
-  reducedMotion: "system",
-  mcpProbing: "off",
-  telemetryEnabled: false,
-  updateChannel: "stable",
-  autoCheckUpdates: true,
+/**
+ * Fields persisted to `localStorage` via Zustand's `persist` middleware.
+ * The shape is an explicit allowlist of user preferences; everything
+ * else is session state and intentionally resets each launch (e.g.
+ * `view`, `search`, `selectedComponentId`, `paletteOpen`, `panicMode`).
+ *
+ * Adding a new persisted field: extend `PersistedUiState` AND
+ * `partialize` below. Adding a session-only field needs no change.
+ */
+type PersistedUiState = Pick<
+  UiState,
+  | "theme"
+  | "density"
+  | "reducedMotion"
+  | "mcpProbing"
+  | "updateChannel"
+  | "autoCheckUpdates"
+>;
 
-  setView: (view) => set({ view }),
-  setTheme: (theme) => set({ theme }),
-  toggleTheme: () =>
-    set((s) => ({
-      theme:
-        s.theme === "dark" ? "light" : s.theme === "light" ? "system" : "dark",
-    })),
-  setDensity: (density) => set({ density }),
-  toggleDensity: () =>
-    set((s) => ({
-      density: s.density === "comfortable" ? "compact" : "comfortable",
-    })),
-  setReducedMotion: (reducedMotion) => set({ reducedMotion }),
-  setMcpProbing: (mcpProbing) => set({ mcpProbing }),
-  setUpdateChannel: (updateChannel) => set({ updateChannel }),
-  setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
-  setSearch: (search) => set({ search }),
-  selectComponent: (id) =>
-    set({ selectedComponentId: id, quickLookOpen: id !== null }),
-  togglePalette: (force) =>
-    set((s) => ({ paletteOpen: force ?? !s.paletteOpen })),
-  toggleQuickLook: (force) =>
-    set((s) => ({ quickLookOpen: force ?? !s.quickLookOpen })),
-  toggleOnboarding: (force) =>
-    set((s) => ({ onboardingOpen: force ?? !s.onboardingOpen })),
-  togglePanicMode: (force) =>
-    set((s) => {
-      const next = force ?? !s.panicMode;
-      // No-op if the requested state matches the current state - we
-      // don't bump `lastToggledAt` for a redundant toggle.
-      if (next === s.panicMode) return {};
-      const panicModeLastToggledAt = Date.now();
-      // Activating panic mode forcibly closes any open surface that could
-      // be revealing a secret or distracting the user.
-      if (next) {
-        return {
-          panicMode: true,
-          panicModeLastToggledAt,
-          quickLookOpen: false,
-          paletteOpen: false,
-          onboardingOpen: false,
-        };
-      }
-      return { panicMode: false, panicModeLastToggledAt };
+const PERSIST_KEY = "aseye:ui";
+/**
+ * Bumped when the persisted shape changes. The `migrate` callback runs
+ * for any older snapshot found in storage; we treat unknown shapes as
+ * "discard, fall back to defaults" rather than guessing because the
+ * partition is small.
+ */
+const PERSIST_VERSION = 1;
+
+export const useUi = create<UiState>()(
+  persist(
+    (set) => ({
+      view: "inventory",
+      theme: "dark",
+      density: "comfortable",
+      search: "type:skill tool:claude-code",
+      selectedComponentId: "spec",
+      paletteOpen: false,
+      quickLookOpen: false,
+      onboardingOpen: false,
+      panicMode: false,
+      panicModeLastToggledAt: null,
+      reducedMotion: "system",
+      mcpProbing: "off",
+      telemetryEnabled: false,
+      updateChannel: "stable",
+      autoCheckUpdates: true,
+
+      setView: (view) => set({ view }),
+      setTheme: (theme) => set({ theme }),
+      toggleTheme: () =>
+        set((s) => ({
+          theme:
+            s.theme === "dark"
+              ? "light"
+              : s.theme === "light"
+                ? "system"
+                : "dark",
+        })),
+      setDensity: (density) => set({ density }),
+      toggleDensity: () =>
+        set((s) => ({
+          density: s.density === "comfortable" ? "compact" : "comfortable",
+        })),
+      setReducedMotion: (reducedMotion) => set({ reducedMotion }),
+      setMcpProbing: (mcpProbing) => set({ mcpProbing }),
+      setUpdateChannel: (updateChannel) => set({ updateChannel }),
+      setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
+      setSearch: (search) => set({ search }),
+      selectComponent: (id) =>
+        set({ selectedComponentId: id, quickLookOpen: id !== null }),
+      togglePalette: (force) =>
+        set((s) => ({ paletteOpen: force ?? !s.paletteOpen })),
+      toggleQuickLook: (force) =>
+        set((s) => ({ quickLookOpen: force ?? !s.quickLookOpen })),
+      toggleOnboarding: (force) =>
+        set((s) => ({ onboardingOpen: force ?? !s.onboardingOpen })),
+      togglePanicMode: (force) =>
+        set((s) => {
+          const next = force ?? !s.panicMode;
+          // No-op if the requested state matches the current state - we
+          // don't bump `lastToggledAt` for a redundant toggle.
+          if (next === s.panicMode) return {};
+          const panicModeLastToggledAt = Date.now();
+          // Activating panic mode forcibly closes any open surface that could
+          // be revealing a secret or distracting the user.
+          if (next) {
+            return {
+              panicMode: true,
+              panicModeLastToggledAt,
+              quickLookOpen: false,
+              paletteOpen: false,
+              onboardingOpen: false,
+            };
+          }
+          return { panicMode: false, panicModeLastToggledAt };
+        }),
     }),
-}));
+    {
+      name: PERSIST_KEY,
+      version: PERSIST_VERSION,
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state): PersistedUiState => ({
+        theme: state.theme,
+        density: state.density,
+        reducedMotion: state.reducedMotion,
+        mcpProbing: state.mcpProbing,
+        updateChannel: state.updateChannel,
+        autoCheckUpdates: state.autoCheckUpdates,
+      }),
+    },
+  ),
+);

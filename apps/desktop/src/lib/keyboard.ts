@@ -24,6 +24,33 @@ import { useUi } from "@/store/ui";
  */
 export const EDITOR_SAVE_EVENT = "aseye:editor-save";
 
+/**
+ * Custom-event name for Cmd-Z inside the form pane. Same decoupling
+ * pattern as `EDITOR_SAVE_EVENT`. We only fire the event when the
+ * keystroke originates outside Monaco (which has its own internal
+ * undo stack the user expects to win for raw-pane edits) and the
+ * Editor view is active.
+ */
+export const EDITOR_UNDO_EVENT = "aseye:editor-undo";
+
+/**
+ * Decide whether a Cmd-Z keystroke should route through the
+ * form-pane undo or fall through to Monaco / the platform default.
+ * Monaco mounts a `data-language` attribute on its host and traps
+ * its own input focus; an active element inside that subtree means
+ * Monaco's undo should win.
+ */
+function shouldUndoFormPane(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  // The Monaco wrapper renders `<div class="editor-monaco-host" ...>`;
+  // any focus inside that container belongs to Monaco's undo stack.
+  if (target.closest(".editor-monaco-host")) return false;
+  // Only fire when focus is inside the form pane. We check the
+  // class the FormPane renders (`form-pane`) rather than asserting
+  // a specific input tag so future field types stay covered.
+  return target.closest(".form-pane") !== null;
+}
+
 export function useGlobalKeyboard(): void {
   const togglePalette = useUi((s) => s.togglePalette);
   const toggleOnboarding = useUi((s) => s.toggleOnboarding);
@@ -55,6 +82,24 @@ export function useGlobalKeyboard(): void {
           event.preventDefault();
           window.dispatchEvent(new CustomEvent(EDITOR_SAVE_EVENT));
         }
+        return;
+      }
+
+      // Cmd-Z inside the form pane fires the undo dispatcher event.
+      // Monaco's own undo wins when its editor has focus; the form
+      // pane's reducer history advances by one when focus is on a
+      // schema-driven field. Cmd-Shift-Z (redo) is not yet
+      // implemented in the reducer so we let the platform default
+      // through for now.
+      if (
+        mod &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "z" &&
+        view === "editor" &&
+        shouldUndoFormPane(event.target)
+      ) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent(EDITOR_UNDO_EVENT));
         return;
       }
 

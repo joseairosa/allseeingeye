@@ -93,6 +93,12 @@ function ToolsGroup() {
       ) : null}
       {(tools ?? []).map((tool) => {
         const count = countsByTool[tool.id];
+        // Undetected tools are truly disabled: filtering to a tool that
+        // is not on disk would yield an empty inventory with no
+        // explanation. The `quiet` class shows the row dimmed; the
+        // `disabled` attribute keeps screen readers, click, and
+        // keyboard interaction in sync (the audit found `aria-disabled`
+        // alone left clicks reachable).
         return (
           <button
             key={tool.id}
@@ -102,7 +108,12 @@ function ToolsGroup() {
               setSearch(`tool:${tool.id}`);
               setView("inventory");
             }}
-            aria-disabled={!tool.detected}
+            disabled={!tool.detected}
+            title={
+              tool.detected
+                ? undefined
+                : `${tool.displayName} not detected on this machine`
+            }
           >
             <span className={`tool-dot ${TOOL_DOT[tool.id]}`} />
             <span>{tool.displayName}</span>

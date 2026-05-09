@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useUi } from "@/store/ui";
+import { startFullScan } from "@/ipc";
 import { CommandSearchIcon, RefreshIcon } from "./icons";
 
 const TITLES: Record<string, string> = {
@@ -11,6 +13,19 @@ const TITLES: Record<string, string> = {
 export function MainHeader() {
   const view = useUi((s) => s.view);
   const togglePalette = useUi((s) => s.togglePalette);
+  const [scanning, setScanning] = useState(false);
+
+  async function handleRefresh(): Promise<void> {
+    if (scanning) return;
+    setScanning(true);
+    try {
+      await startFullScan();
+    } catch (err) {
+      console.error("[main-header] refresh failed", err);
+    } finally {
+      setScanning(false);
+    }
+  }
 
   return (
     <div className="main-header">
@@ -32,8 +47,13 @@ export function MainHeader() {
         <button
           type="button"
           className="icon-button"
-          aria-label="refresh index"
-          title="Refresh index"
+          aria-label={scanning ? "refreshing index" : "refresh index"}
+          aria-busy={scanning}
+          title={scanning ? "Refreshing..." : "Refresh index"}
+          onClick={() => {
+            void handleRefresh();
+          }}
+          disabled={scanning}
         >
           <RefreshIcon />
         </button>

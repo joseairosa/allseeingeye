@@ -34,7 +34,7 @@ import {
   useSaveComponent,
   useValidationSchema,
 } from "@/ipc/hooks";
-import { EDITOR_SAVE_EVENT } from "@/lib/keyboard";
+import { EDITOR_SAVE_EVENT, EDITOR_UNDO_EVENT } from "@/lib/keyboard";
 import type { SaveOutcome, ValidationError } from "@aseye/shared-types";
 import {
   editReducer,
@@ -153,8 +153,16 @@ function ExternalChangeBanner({
   );
 }
 
+interface ToastBannerProps {
+  toast: Toast;
+  /** Wired only for error toasts; calling it re-fires the save. */
+  onRetry?: () => void;
+  /** Wired only for error toasts; success toasts auto-clear. */
+  onDismiss?: () => void;
+}
+
 /** Light toast banner shown above the editor body. */
-function ToastBanner({ toast }: { toast: Toast }): ReactElement {
+function ToastBanner({ toast, onRetry, onDismiss }: ToastBannerProps): ReactElement {
   const role = toast.kind === "error" ? "alert" : "status";
   return (
     <div
@@ -165,6 +173,25 @@ function ToastBanner({ toast }: { toast: Toast }): ReactElement {
     >
       <span>{toast.kind === "error" ? "!" : "✓"}</span>
       <p>{toast.message}</p>
+      {toast.kind === "error" ? (
+        <div className="editor-actions" style={{ marginLeft: "auto", gap: 8 }}>
+          {onRetry ? (
+            <button type="button" className="primary-button" onClick={onRetry}>
+              retry
+            </button>
+          ) : null}
+          {onDismiss ? (
+            <button
+              type="button"
+              className="text-button quiet"
+              onClick={onDismiss}
+              aria-label="dismiss error"
+            >
+              dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -351,9 +378,25 @@ export function EditorView(): ReactElement {
     return () => window.removeEventListener(EDITOR_SAVE_EVENT, onSave);
   }, [handleSave, isActive]);
 
-  // Auto-clear the toast after a few seconds so it doesn't stick.
+  // Cmd-Z routing while focus is in the form pane. The keyboard layer
+  // gates on Monaco focus so we don't fight Monaco's own undo stack.
+  useEffect(() => {
+    function onUndo(): void {
+      if (!isActive) return;
+      if (state === null) return;
+      dispatch({ type: "undoFormChange", serialise: projector.serialise });
+    }
+    window.addEventListener(EDITOR_UNDO_EVENT, onUndo);
+    return () => window.removeEventListener(EDITOR_UNDO_EVENT, onUndo);
+  }, [isActive, projector.serialise, state]);
+
+  // Auto-clear success toasts after a few seconds. Error toasts persist
+  // until the user retries or dismisses them - dropping an error after
+  // 4 seconds left users with no recovery path beyond re-issuing Cmd-S
+  // by hand.
   useEffect(() => {
     if (toast === null) return;
+    if (toast.kind === "error") return;
     const id = window.setTimeout(() => setToast(null), 4000);
     return () => window.clearTimeout(id);
   }, [toast]);
@@ -455,7 +498,25 @@ export function EditorView(): ReactElement {
           onForceSave={handleForceSave}
         />
       ) : null}
-      {toast ? <ToastBanner toast={toast} /> : null}
+      {toast ? (
+        <ToastBanner
+          toast={toast}
+          {...(toast.kind === "error" && state !== null
+            ? {
+                onRetry: () => {
+                  setToast(null);
+                  // Retry against the latest known hash. If the user
+                  // got an externalChange in between, the regular save
+                  // path will surface that and the banner takes over.
+                  runSave(
+                    state.externalChange?.currentHash ?? state.originalHash,
+                  );
+                },
+                onDismiss: () => setToast(null),
+              }
+            : {})}
+        />
+      ) : null}
 
       {body}
     </section>
