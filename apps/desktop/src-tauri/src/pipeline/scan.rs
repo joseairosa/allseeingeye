@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 
 use super::error::PipelineError;
 use super::event::{PipelineEvent, ScanReport};
+use crate::index::settings::read_excluded_tool_ids;
 use crate::index::{read_project_memory_roots, upsert_component, IndexHandle, UpsertKind};
 use crate::registry::project_walker::{walk_project_memory, ProjectMemoryHit};
 use crate::registry::types::{ComponentRoot, ComponentType, Format, Scope, ToolId};
@@ -39,12 +40,30 @@ pub fn full_scan_inner(
     events_tx: &broadcast::Sender<PipelineEvent>,
 ) -> Result<ScanReport, PipelineError> {
     let descriptors = registry_slice();
+
+    // Audit issue #2 - the user can mark a detected tool as "skipped"
+    // from Settings -> Tools. Filter the iteration set before any
+    // walking happens so excluded tools never produce upserts. Stored
+    // ids are kebab-case (`ToolId` serde rename); we drop unknown
+    // strings silently because a user editing the row by hand is
+    // expected to be exploring, not breaking the scan.
+    let excluded_strings = read_excluded_tool_ids(index);
+    let excluded_ids: Vec<ToolId> = excluded_strings
+        .iter()
+        .filter_map(|s| crate::index::upsert::parse_tool_id(s))
+        .collect();
+    let active_tool_ids: Vec<ToolId> = detected_tool_ids
+        .iter()
+        .copied()
+        .filter(|id| !excluded_ids.contains(id))
+        .collect();
+
     let mut report = ScanReport {
-        tools_scanned: u32::try_from(detected_tool_ids.len()).unwrap_or(u32::MAX),
+        tools_scanned: u32::try_from(active_tool_ids.len()).unwrap_or(u32::MAX),
         ..ScanReport::default()
     };
 
-    for tool_id in detected_tool_ids {
+    for tool_id in &active_tool_ids {
         let Some(descriptor) = descriptors.iter().find(|d| d.id == *tool_id) else {
             continue;
         };
@@ -100,7 +119,11 @@ pub fn full_scan_inner(
     // when no project-memory tools are detected - because Codex
     // detection is HOME-dir based and a project-only Codex install
     // (no `~/.codex/`) is a real configuration the user can have.
-    walk_and_upsert_project_memory(index, home, events_tx, &mut report);
+    //
+    // Audit issue #2 - the walker also honours the excludedToolIds
+    // setting: a hit attributed to a tool in the exclusion list is
+    // dropped before upsert.
+    walk_and_upsert_project_memory(index, home, events_tx, &mut report, &excluded_ids);
 
     let _ = events_tx.send(PipelineEvent::ScanCompleted {
         report: report.clone(),
@@ -120,6 +143,7 @@ fn walk_and_upsert_project_memory(
     home: Option<&Path>,
     events_tx: &broadcast::Sender<PipelineEvent>,
     report: &mut ScanReport,
+    excluded_ids: &[ToolId],
 ) {
     let descriptors = registry_slice();
     let raw_roots = read_project_memory_roots(index);
@@ -127,6 +151,12 @@ fn walk_and_upsert_project_memory(
     let hits = walk_project_memory(&roots, home);
 
     for hit in hits {
+        // Skip hits attributed to a tool the user has excluded so a
+        // skipped tool doesn't show up via the project-tree walker.
+        if excluded_ids.contains(&hit.tool) {
+            continue;
+        }
+
         report.components_seen = report.components_seen.saturating_add(1);
 
         let Some(descriptor) = descriptors.iter().find(|d| d.id == hit.tool) else {

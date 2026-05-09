@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
-import { detectedToolsFixture } from "@/lib/fixtures";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
 import {
   exportDiagnostics,
@@ -11,9 +10,11 @@ import {
   startFullScan,
 } from "@/ipc";
 import {
+  useExcludedToolIds,
   useHealthSummary,
   useProjectMemoryRoots,
   useSetProjectMemoryRoots,
+  useSetToolIndexed,
   useTools,
 } from "@/ipc/hooks";
 import { useDiagnosticsEvents } from "@/lib/diagnosticsRing";
@@ -153,35 +154,92 @@ function GeneralPane() {
   );
 }
 
+/**
+ * Map a `ToolId` to the design-system colour-dot class. Mirrors the
+ * fixture list one-to-one - the fixture is going away once #2 lands
+ * but the dot mapping itself is part of the design.
+ */
+function dotClassFor(toolId: string): string {
+  switch (toolId) {
+    case "claude-code":
+      return "claude";
+    case "codex":
+      return "codex";
+    case "cursor":
+      return "cursor";
+    case "antigravity":
+      return "anti";
+    default:
+      return "claude";
+  }
+}
+
 function ToolsPane() {
-  // TODO(phase-1.6): replace with `invoke<DetectedTool[]>('list_tools')` and
-  // wire the `indexed` toggle to `invoke('set_tool_indexed', ...)`. Until
-  // then we read from the static fixture.
+  // Audit issue #2 - the previous implementation read from a static
+  // fixture and the toggle had no handler. Now both come from the
+  // live IPC: detection drives the list, and `set_tool_indexed`
+  // persists per-tool exclusions in `app_settings.excludedToolIds`.
+  const tools = useTools();
+  const excluded = useExcludedToolIds();
+  const setIndexedMut = useSetToolIndexed();
+
+  // Memoise the lookup so each row's `indexed` boolean is a stable
+  // reference; otherwise the row re-renders on every parent tick.
+  const excludedSet = useMemo<ReadonlySet<string>>(
+    () => new Set(excluded.data ?? []),
+    [excluded.data],
+  );
+
+  function handleToggle(toolId: string, currentlyIndexed: boolean): void {
+    setIndexedMut.mutate({ toolId, indexed: !currentlyIndexed });
+  }
+
+  const isPending = tools.isPending || excluded.isPending;
+  const isError = tools.isError;
+
   return (
     <section className="health-pane settings-pane" aria-labelledby="settings-tools">
       <h3 id="settings-tools">Tools</h3>
+      {isPending ? (
+        <p className="settings-todo" aria-live="polite">
+          loading detected tools…
+        </p>
+      ) : null}
+      {isError ? (
+        <p className="settings-todo" role="alert">
+          could not load tools; check the index process
+        </p>
+      ) : null}
+      {!isPending && !isError && (tools.data?.length ?? 0) === 0 ? (
+        <p className="settings-todo">no tools detected</p>
+      ) : null}
       <div className="settings-tools-list">
-        {detectedToolsFixture.map((tool) => (
-          <div key={tool.id} className="settings-tool-row">
-            <span className={`tool-dot ${tool.dotClass}`} />
-            <div>
-              <strong>{tool.displayName}</strong>
-              <div className="mono">{tool.rootPath}</div>
+        {(tools.data ?? []).map((tool) => {
+          const indexed = !excludedSet.has(tool.id);
+          const rootPath = tool.existingRootPaths[0] ?? "(no root detected)";
+          return (
+            <div key={tool.id} className="settings-tool-row">
+              <span className={`tool-dot ${dotClassFor(tool.id)}`} />
+              <div>
+                <strong>{tool.displayName}</strong>
+                <div className="mono">{rootPath}</div>
+              </div>
+              <span className={`health-pill ${indexed ? "up" : "cold"}`}>
+                {indexed ? "indexed" : "skipped"}
+              </span>
+              <button
+                type="button"
+                className="text-button quiet"
+                aria-pressed={indexed}
+                aria-label={`toggle indexing for ${tool.displayName}`}
+                onClick={() => handleToggle(tool.id, indexed)}
+                disabled={setIndexedMut.isPending}
+              >
+                {indexed ? "skip" : "index"}
+              </button>
             </div>
-            <span className={`health-pill ${tool.indexed ? "up" : "cold"}`}>
-              {tool.indexed ? "indexed" : "skipped"}
-            </span>
-            <button
-              type="button"
-              className="text-button quiet"
-              aria-pressed={tool.indexed}
-              aria-label={`toggle indexing for ${tool.displayName}`}
-              // TODO(phase-1.6): invoke('set_tool_indexed', { id, indexed })
-            >
-              {tool.indexed ? "skip" : "index"}
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

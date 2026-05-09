@@ -460,4 +460,61 @@ mod tests {
         assert!(report2.components_unchanged >= 2);
         assert_eq!(report2.components_inserted, 0);
     }
+
+    /// Audit issue #2 - a tool listed in `excludedToolIds` must not
+    /// produce upserts on the next scan. We assert against the
+    /// `component` table directly rather than the report aggregates
+    /// because the host running the tests may have other tools on
+    /// `PATH` whose detection also fires; the per-tool filter is what
+    /// the user cares about.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_scan_skips_excluded_tools() {
+        let home = fake_home();
+        let index = Arc::new(IndexHandle::open_in_memory().expect("open"));
+        // Mark claude-code as excluded BEFORE the pipeline scan runs.
+        // Detection still finds the tool (it lives on disk under the
+        // fake home), so the only thing keeping rows out of the index
+        // is the scan-side filter we just added.
+        crate::index::settings::add_excluded_tool_id(&index, "claude-code").expect("add exclusion");
+
+        let pipeline =
+            Pipeline::start_with_home(Arc::clone(&index), Some(home.path().to_path_buf()))
+                .expect("start");
+        pipeline.full_scan().expect("scan");
+
+        // No claude-code rows even though detection found it.
+        let claude_count: i64 = index
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM component WHERE tool = 'claude-code'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(
+            claude_count, 0,
+            "excluded tool wrote {claude_count} rows; expected 0",
+        );
+
+        // Removing the exclusion and re-scanning populates the index,
+        // confirming the gate is the only thing that was suppressing
+        // writes for this tool.
+        crate::index::settings::remove_excluded_tool_id(&index, "claude-code")
+            .expect("remove exclusion");
+        pipeline.full_scan().expect("rescan");
+        let claude_count_after: i64 = index
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM component WHERE tool = 'claude-code'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert!(
+            claude_count_after >= 1,
+            "unexcluded scan produced {claude_count_after} claude-code rows; expected >= 1",
+        );
+    }
 }

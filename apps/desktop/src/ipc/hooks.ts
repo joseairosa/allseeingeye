@@ -36,6 +36,7 @@ import type {
 import {
   getComponent,
   getComponentWithRaw,
+  getExcludedToolIds,
   getFindingsCountPerComponent,
   getHealthSummary,
   getSecuritySummary,
@@ -46,6 +47,7 @@ import {
   readComponentRaw,
   saveComponent,
   search,
+  setToolIndexed,
   suppressFinding,
   unsuppressFinding,
   usageQuery,
@@ -515,6 +517,50 @@ export function useSetProjectMemoryRoots(): UseMutationResult<
       void qc.invalidateQueries({
         queryKey: [...QUERY_KEYS.settings, "projectMemoryRoots"] as const,
       });
+    },
+  });
+}
+
+/**
+ * Read the persisted excluded-tool-id set. Empty list means every
+ * detected tool is indexed.
+ */
+export function useExcludedToolIds(): UseQueryResult<string[], Error> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.settings, "excludedToolIds"] as const,
+    queryFn: getExcludedToolIds,
+    staleTime: 60_000,
+  });
+}
+
+/** Argument shape for `useSetToolIndexed`. */
+export interface SetToolIndexedVariables {
+  toolId: string;
+  indexed: boolean;
+}
+
+/**
+ * Toggle a tool's indexing state. The mutation invalidates the
+ * excluded-id query so the Settings list reflects the new state, and
+ * the components / health caches because the next scan honours the
+ * new exclusion immediately.
+ */
+export function useSetToolIndexed(): UseMutationResult<
+  string[],
+  Error,
+  SetToolIndexedVariables
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ toolId, indexed }) => setToolIndexed(toolId, indexed),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: [...QUERY_KEYS.settings, "excludedToolIds"] as const,
+      });
+      // The watcher dispatch reads the same row at runtime, but
+      // existing rows for an excluded tool stay in the index until
+      // the user runs a re-scan or rebuild. The user controls that;
+      // we do not auto-trigger because the surface is destructive.
     },
   });
 }

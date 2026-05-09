@@ -426,6 +426,43 @@ pub async fn reset_index(state: State<'_, Arc<IndexHandle>>) -> Result<(), Strin
     .map_err(|e| format!("reset_index task panicked: {e}"))?
 }
 
+/// Read the current `excludedToolIds` set so the Settings UI can
+/// reflect the persisted state without a redundant write/read race.
+///
+/// Returns an empty list when the row is absent. The kebab-case
+/// strings line up 1:1 with `ToolId`'s `serde(rename_all =
+/// "kebab-case")` representation; unknown ids stay in the list so the
+/// user can pre-stage exclusions for tools we haven't released
+/// support for yet.
+#[tauri::command]
+#[must_use]
+pub fn get_excluded_tool_ids(state: State<'_, Arc<IndexHandle>>) -> Vec<String> {
+    crate::index::settings::read_excluded_tool_ids(state.inner().as_ref())
+}
+
+/// Toggle whether a tool is indexed. `indexed = true` removes the id
+/// from the excluded set; `indexed = false` adds it. Idempotent on
+/// both branches.
+///
+/// Backs the Settings -> Tools per-row toggle (audit issue #2). The
+/// next scan honours the persisted set; the live watcher dispatch
+/// refers to the same row, so flipping this off does not require a
+/// re-scan to take effect.
+#[tauri::command]
+pub fn set_tool_indexed(
+    state: State<'_, Arc<IndexHandle>>,
+    tool_id: String,
+    indexed: bool,
+) -> Result<Vec<String>, String> {
+    let handle = state.inner().as_ref();
+    let next = if indexed {
+        crate::index::settings::remove_excluded_tool_id(handle, &tool_id)
+    } else {
+        crate::index::settings::add_excluded_tool_id(handle, &tool_id)
+    };
+    next.map_err(|e| e.to_string())
+}
+
 /// Persist a sanitised diagnostics JSON snapshot to `target_path`.
 ///
 /// Backs the Settings -> Privacy "Diagnostics export" button (issue

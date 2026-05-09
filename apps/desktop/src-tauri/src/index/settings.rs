@@ -32,6 +32,13 @@ pub const KEY_PROJECT_MEMORY_ROOTS: &str = "projectMemoryRoots";
 /// projects).
 pub const DEFAULT_PROJECT_MEMORY_ROOTS: &[&str] = &["~/Development", "~"];
 
+/// Setting key for the per-tool "skip this tool" flag set. Stored as a
+/// JSON array of `ToolId` strings (kebab-case to match
+/// `serde(rename_all = "kebab-case")` on `ToolId`). Tools listed here
+/// are skipped by the pipeline scan and the live watcher dispatch.
+/// Backs the Settings -> Tools index toggle (audit issue #2).
+pub const KEY_EXCLUDED_TOOL_IDS: &str = "excludedToolIds";
+
 /// Read a setting as a JSON value. Returns `Ok(None)` when the key is
 /// absent. Returns `Ok(Some(Null))` only if the row was explicitly
 /// stored as the JSON string `"null"`.
@@ -76,6 +83,66 @@ pub fn write_setting_raw(handle: &IndexHandle, key: &str, value: &JsonValue) -> 
         )?;
         Ok(())
     })
+}
+
+/// Read the persisted set of `excludedToolIds` (audit issue #2).
+///
+/// Returns an empty `Vec` when the row is absent, malformed, or the
+/// stored value is not an array of strings. The scan / watcher
+/// dispatch consult this list to skip tools the user has marked as
+/// "skipped" in Settings.
+#[must_use]
+pub fn read_excluded_tool_ids(handle: &IndexHandle) -> Vec<String> {
+    let raw = read_setting_raw(handle, KEY_EXCLUDED_TOOL_IDS)
+        .ok()
+        .flatten();
+    let parsed: Option<Vec<String>> = raw.and_then(|v| match v {
+        JsonValue::Array(items) => Some(
+            items
+                .into_iter()
+                .filter_map(|x| match x {
+                    JsonValue::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        _ => None,
+    });
+    parsed.unwrap_or_default()
+}
+
+/// Persist the set of `excludedToolIds`. Duplicates are removed and
+/// entries are stored in sorted order so a re-write of an unchanged
+/// set produces a byte-identical row.
+pub fn write_excluded_tool_ids(handle: &IndexHandle, ids: &[String]) -> Result<()> {
+    let mut deduped: Vec<String> = ids.iter().map(|s| s.trim().to_owned()).collect();
+    deduped.retain(|s| !s.is_empty());
+    deduped.sort();
+    deduped.dedup();
+    let value = JsonValue::Array(deduped.into_iter().map(JsonValue::String).collect());
+    write_setting_raw(handle, KEY_EXCLUDED_TOOL_IDS, &value)
+}
+
+/// Add `tool_id` to the excluded set; idempotent. Returns the resulting
+/// list so callers can reflect it back into a query cache without a
+/// round-trip read.
+pub fn add_excluded_tool_id(handle: &IndexHandle, tool_id: &str) -> Result<Vec<String>> {
+    let mut current = read_excluded_tool_ids(handle);
+    let trimmed = tool_id.trim();
+    if !current.iter().any(|s| s == trimmed) {
+        current.push(trimmed.to_owned());
+    }
+    write_excluded_tool_ids(handle, &current)?;
+    Ok(read_excluded_tool_ids(handle))
+}
+
+/// Remove `tool_id` from the excluded set; idempotent.
+pub fn remove_excluded_tool_id(handle: &IndexHandle, tool_id: &str) -> Result<Vec<String>> {
+    let mut current = read_excluded_tool_ids(handle);
+    let trimmed = tool_id.trim();
+    current.retain(|s| s != trimmed);
+    write_excluded_tool_ids(handle, &current)?;
+    Ok(read_excluded_tool_ids(handle))
 }
 
 /// Read the configured project-memory walker roots.
@@ -170,5 +237,78 @@ mod tests {
         write_setting_raw(&handle, KEY_PROJECT_MEMORY_ROOTS, &value).expect("write");
         let roots = read_project_memory_roots(&handle);
         assert_eq!(roots, vec!["~/Code".to_owned(), "~/Other".to_owned()]);
+    }
+
+    // ─── Audit follow-up - excludedToolIds (issue #2) ─────────────────
+
+    /// A missing row reads as an empty exclusion set so the scan runs
+    /// against every detected tool by default - matches the docs/03
+    /// promise that "out of the box, every detected tool is indexed".
+    #[test]
+    fn excluded_tool_ids_default_to_empty() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        assert!(read_excluded_tool_ids(&handle).is_empty());
+    }
+
+    /// Round-trip: write a set, read it back. The reader returns the
+    /// sorted, deduplicated list the writer persisted.
+    #[test]
+    fn excluded_tool_ids_round_trip() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        write_excluded_tool_ids(
+            &handle,
+            &[
+                "codex".to_owned(),
+                "claude-code".to_owned(),
+                "codex".to_owned(),
+            ],
+        )
+        .expect("write");
+        assert_eq!(
+            read_excluded_tool_ids(&handle),
+            vec!["claude-code".to_owned(), "codex".to_owned()],
+        );
+    }
+
+    /// `add_excluded_tool_id` is idempotent - inserting the same id
+    /// twice produces a one-entry list, not a duplicate.
+    #[test]
+    fn add_excluded_tool_id_is_idempotent() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let after_first = add_excluded_tool_id(&handle, "antigravity").expect("add 1");
+        let after_second = add_excluded_tool_id(&handle, "antigravity").expect("add 2");
+        assert_eq!(after_first, vec!["antigravity".to_owned()]);
+        assert_eq!(after_second, vec!["antigravity".to_owned()]);
+    }
+
+    /// `remove_excluded_tool_id` is idempotent and survives a missing
+    /// id without erroring - the IPC contract is "ensure this is not
+    /// present" rather than "delete or fail".
+    #[test]
+    fn remove_excluded_tool_id_handles_missing() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let after = remove_excluded_tool_id(&handle, "claude-code").expect("remove");
+        assert!(after.is_empty());
+        add_excluded_tool_id(&handle, "claude-code").expect("add");
+        let after_real = remove_excluded_tool_id(&handle, "claude-code").expect("remove real");
+        assert!(after_real.is_empty());
+    }
+
+    /// A corrupted row parses back as empty rather than panicking, so
+    /// a manual edit-gone-wrong does not lock the user out of running
+    /// scans.
+    #[test]
+    fn excluded_tool_ids_corrupt_row_falls_back_to_empty() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        handle
+            .write(|conn| {
+                conn.execute(
+                    "INSERT INTO app_settings (key, value) VALUES (?1, ?2)",
+                    params![KEY_EXCLUDED_TOOL_IDS, "garbage"],
+                )?;
+                Ok(())
+            })
+            .expect("insert");
+        assert!(read_excluded_tool_ids(&handle).is_empty());
     }
 }

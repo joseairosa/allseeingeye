@@ -224,6 +224,8 @@ pub fn run() {
             ipc::commands::rebuild_index,
             ipc::commands::reset_index,
             ipc::commands::export_diagnostics,
+            ipc::commands::get_excluded_tool_ids,
+            ipc::commands::set_tool_indexed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

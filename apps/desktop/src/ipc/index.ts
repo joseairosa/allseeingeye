@@ -296,3 +296,24 @@ export async function exportDiagnostics(
 ): Promise<void> {
   return invoke<void>("export_diagnostics", { targetPath, contents });
 }
+
+/**
+ * Read the persisted set of `excludedToolIds`. Empty list means every
+ * detected tool is indexed (the docs/03 default).
+ */
+export async function getExcludedToolIds(): Promise<string[]> {
+  return invoke<string[]>("get_excluded_tool_ids");
+}
+
+/**
+ * Toggle whether a detected tool is indexed. `indexed: true` removes
+ * the tool from the excluded set; `indexed: false` adds it. Returns
+ * the resulting excluded list so callers can update their cache
+ * without a follow-up read.
+ */
+export async function setToolIndexed(
+  toolId: string,
+  indexed: boolean,
+): Promise<string[]> {
+  return invoke<string[]>("set_tool_indexed", { toolId, indexed });
+}
