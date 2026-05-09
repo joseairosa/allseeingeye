@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUi } from "@/store/ui";
 import { useComponentFindingsCounts, useComponents } from "@/ipc/hooks";
@@ -66,9 +66,34 @@ const FILTER_CHIPS = [
   { id: "tool:claude-code", label: "Claude Code" },
   { id: "type:skill", label: "Skill" },
   { id: "scope:user", label: "User" },
-  { id: "last:7d", label: "Recently used" },
-  { id: "has:relations", label: "Has relations" },
 ] as const;
+
+/**
+ * Toggle groups exposed by the filters popover (audit issue #6). The
+ * popover writes search-string tokens through `toggleFilterPrefix`, the
+ * same path the inline chips use - so popover and chip state stay in
+ * sync without a parallel store.
+ */
+const POPOVER_TOOLS: ReadonlyArray<{ id: ToolId; label: string }> = [
+  { id: "claude-code", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
+  { id: "cursor", label: "Cursor" },
+  { id: "antigravity", label: "Antigravity" },
+];
+const POPOVER_TYPES: ReadonlyArray<{ id: ComponentType; label: string }> = [
+  { id: "skill", label: "Skill" },
+  { id: "agent", label: "Agent" },
+  { id: "command", label: "Command" },
+  { id: "mcp", label: "MCP" },
+  { id: "rule", label: "Rule" },
+  { id: "memory", label: "Memory" },
+  { id: "hook", label: "Hook" },
+];
+const POPOVER_SCOPES: ReadonlyArray<{ id: Scope; label: string }> = [
+  { id: "user", label: "User" },
+  { id: "project", label: "Project" },
+  { id: "plugin", label: "Plugin" },
+];
 
 interface RowProps {
   row: ComponentSummary;
@@ -237,10 +262,6 @@ function chipStates(
     "tool:claude-code": { active: filterToolId === "claude-code" },
     "type:skill": { active: filterKind === "skill" },
     "scope:user": { active: filterScope === "user" },
-    // `last:7d` and `has:relations` are not yet plumbed through to the
-    // backend filter, so chip activity reflects raw search-string presence.
-    "last:7d": { active: false },
-    "has:relations": { active: false },
   };
 }
 
@@ -310,6 +331,129 @@ function VirtualBody({
   );
 }
 
+interface FilterPopoverProps {
+  search: string;
+  filterToolId: ToolId | null;
+  filterKind: ComponentType | null;
+  filterScope: Scope | null;
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  onChange: (next: string) => void;
+  onClose: () => void;
+}
+
+/**
+ * Audit issue #6: the filters button used to be dead. It now toggles a
+ * popover with grouped chips for tool / type / scope. Each chip pipes
+ * through `toggleFilterPrefix` so popover state mirrors the inline
+ * chips and the search bar without a separate store.
+ *
+ * Outside-click handling: a `pointerdown` on the document is the trip
+ * wire. We ignore clicks that originate inside the popover body OR on
+ * the anchor button (so the parent's onClick can re-toggle without a
+ * close-then-open race).
+ */
+function FilterPopover({
+  search,
+  filterToolId,
+  filterKind,
+  filterScope,
+  anchorRef,
+  onChange,
+  onClose,
+}: FilterPopoverProps): React.ReactElement {
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (popoverRef.current?.contains(target)) return;
+      if (anchorRef.current?.contains(target)) return;
+      onClose();
+    }
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [anchorRef, onClose]);
+
+  function toggle(prefix: string): void {
+    onChange(toggleFilterPrefix(search, prefix));
+  }
+
+  return (
+    <div
+      ref={popoverRef}
+      className="filter-popover"
+      role="dialog"
+      aria-label="filters"
+    >
+      <div className="filter-popover-group">
+        <h4>Tool</h4>
+        <div className="filter-popover-chips">
+          {POPOVER_TOOLS.map((t) => {
+            const active = filterToolId === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                className={`chip${active ? " selected" : ""}`}
+                aria-pressed={active}
+                onClick={() => toggle(`tool:${t.id}`)}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="filter-popover-group">
+        <h4>Type</h4>
+        <div className="filter-popover-chips">
+          {POPOVER_TYPES.map((t) => {
+            const active = filterKind === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                className={`chip${active ? " selected" : ""}`}
+                aria-pressed={active}
+                onClick={() => toggle(`type:${t.id}`)}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="filter-popover-group">
+        <h4>Scope</h4>
+        <div className="filter-popover-chips">
+          {POPOVER_SCOPES.map((t) => {
+            const active = filterScope === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                className={`chip${active ? " selected" : ""}`}
+                aria-pressed={active}
+                onClick={() => toggle(`scope:${t.id}`)}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function InventoryView() {
   const search = useUi((s) => s.search);
   const setSearch = useUi((s) => s.setSearch);
@@ -350,6 +494,11 @@ export function InventoryView() {
 
   const handleOpenEditor = (): void => setView("editor");
 
+  // Audit issue #6: the filters toolbar button now toggles a popover
+  // with grouped tool / type / scope chips.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersBtnRef = useRef<HTMLButtonElement>(null);
+
   return (
     <section
       className={`view${isActive ? " active" : ""}`}
@@ -370,10 +519,30 @@ export function InventoryView() {
             placeholder="search..."
           />
         </label>
-        <button type="button" className="text-button">
-          <FiltersIcon />
-          filters
-        </button>
+        <div className="filter-anchor">
+          <button
+            ref={filtersBtnRef}
+            type="button"
+            className={`text-button${filtersOpen ? " active" : ""}`}
+            aria-expanded={filtersOpen}
+            aria-haspopup="dialog"
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            <FiltersIcon />
+            filters
+          </button>
+          {filtersOpen ? (
+            <FilterPopover
+              search={search}
+              filterToolId={parsed.filter.toolId}
+              filterKind={parsed.filter.kind}
+              filterScope={parsed.filter.scope}
+              anchorRef={filtersBtnRef}
+              onChange={setSearch}
+              onClose={() => setFiltersOpen(false)}
+            />
+          ) : null}
+        </div>
       </div>
 
       <div className="filter-strip" aria-label="active filters">
@@ -391,7 +560,11 @@ export function InventoryView() {
             </button>
           );
         })}
-        <button type="button" className="chip ghost">+ tag</button>
+        {/*
+          Audit issue #10: a "+ tag" chip used to live here but tags are
+          not a thing yet. Removed for consistency with QuickLook (#4).
+          Returns when a tag system actually ships.
+        */}
       </div>
 
       <div className="inventory-grid" role="table" aria-label="components">

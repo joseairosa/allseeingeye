@@ -658,6 +658,55 @@ kbd {
   padding: 0 10px;
 }
 
+/* Filter popover (audit issue #6). The anchor is the inventory-toolbar
+   "filters" button; the popover is positioned absolutely beneath it so
+   it overlays the filter-strip without pushing layout. */
+.filter-anchor {
+  position: relative;
+}
+
+.filter-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 320px;
+  max-width: 480px;
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  box-shadow: var(--shadow-medium);
+}
+
+.filter-popover-group {
+  display: grid;
+  gap: 8px;
+}
+
+.filter-popover-group h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.filter-popover-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.text-button.active {
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
 .chip.selected {
   color: var(--text-primary);
   background: rgba(96, 165, 250, 0.14);
