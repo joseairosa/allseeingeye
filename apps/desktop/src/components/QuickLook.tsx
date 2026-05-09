@@ -5,6 +5,12 @@ import {
   useSuppressFinding,
 } from "@/ipc/hooks";
 import { formatRelativeTime } from "@/lib/relativeTime";
+import {
+  contextWindowPct,
+  estimateTokens,
+  formatTokensK,
+  MAX_CONTEXT_TOKENS,
+} from "@/lib/tokens";
 import type {
   ComponentDetail,
   FindingSummary,
@@ -79,7 +85,35 @@ function Body({ detail }: BodyProps) {
         </section>
       ) : null}
       <SecuritySection componentId={detail.id} />
+      <CostFooter detail={detail} />
     </>
+  );
+}
+
+/**
+ * Phase 14B - cost footer. Memory components only. Renders a single
+ * line below the metadata showing the rough token count and the share
+ * of a 200k context window the file consumes if always loaded.
+ *
+ * The component returns `null` for non-memory kinds rather than an
+ * empty string - keeps DOM noise out of Quick Look for the majority
+ * of components (skills/agents/commands have no per-turn preamble
+ * cost worth quoting).
+ */
+function CostFooter({ detail }: { detail: ComponentDetail }): React.ReactElement | null {
+  if (detail.kind !== "memory") return null;
+  const tokens = estimateTokens(detail.size);
+  const pct = contextWindowPct(tokens);
+  const tokenLabel = formatTokensK(tokens);
+  const pctLabel = pct < 0.1 ? "<0.1" : pct.toFixed(1);
+  const contextLabel = `${(MAX_CONTEXT_TOKENS / 1000).toFixed(0)}k`;
+  return (
+    <p
+      className="quick-cost-footer"
+      title="Approximate, based on ~4 chars/token. Real cost varies by tokenizer and content."
+    >
+      ~{tokenLabel} tokens · {pctLabel}% of a {contextLabel} context window
+    </p>
   );
 }
 

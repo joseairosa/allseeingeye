@@ -965,6 +965,18 @@ body.reduced-motion .skeleton-block { animation: none; }
   line-height: 1.55;
 }
 
+/* Phase 14B - Quick Look cost footer (memory components only).
+ * Tertiary colour matches the size chip in the inventory grid so the
+ * two surfaces feel like the same idea. */
+.quick-cost-footer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .quick-actions {
   position: sticky;
   bottom: 0;
@@ -1325,6 +1337,26 @@ body.light pre {
   background: var(--bg-elev-2);
 }
 
+/* Phase 14B - bloated-memory list. Five-column grid keeps the size /
+ * tokens columns narrow and right-aligned with the open-in-editor
+ * button. Reuses `.health-row` chrome for borders / hover. */
+.health-row.bloat-row {
+  grid-template-columns: minmax(140px, 1.5fr) minmax(110px, 1fr) 60px 80px 70px;
+}
+
+.health-row.bloat-row.bloat-empty {
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.bloat-empty-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--accent-1);
+  stroke-width: 1.6;
+}
+
 .drift-pair {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr);
@@ -1399,6 +1431,326 @@ body.light pre {
 .stat-grid span {
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+/* ─── Cost view (Phase 14C) ────────────────────────────────────────── */
+
+.cost-toolbar {
+  margin-bottom: 14px;
+}
+
+.cost-refreshed-meta {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.cost-toolbar .text-button {
+  margin-left: 0;
+}
+
+.cost-kpi-strip {
+  margin-bottom: 14px;
+}
+
+.cost-kpi-grid {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.cost-kpi-grid strong {
+  color: var(--text-primary);
+  font-feature-settings: "tnum" 1;
+}
+
+.cost-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.05fr) minmax(360px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.cost-right-column {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.cost-pane {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elev-1);
+  border-radius: var(--radius);
+  padding: 14px;
+  min-width: 0;
+}
+
+.cost-pane h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+/* Bar list - by-project. */
+.cost-bar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.cost-bar-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.1fr) minmax(120px, 2fr) 90px;
+  align-items: center;
+  gap: 10px;
+}
+
+.cost-bar-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-bar-track {
+  position: relative;
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-elev-3);
+  overflow: hidden;
+}
+
+.cost-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-1);
+  border-radius: 999px;
+  transition: width 220ms ease;
+}
+
+body.reduced-motion .cost-bar-fill { transition: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cost-bar-fill { transition: none; }
+}
+
+.cost-bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.cost-bar-footnote {
+  margin: 10px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* Sparkline - by-day. */
+.cost-day-pane {
+  display: grid;
+  gap: 8px;
+}
+
+.cost-sparkline {
+  display: block;
+  width: 100%;
+  height: 40px;
+  color: var(--accent-2);
+}
+
+.cost-day-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recommendations panel. */
+.cost-recs-pane {
+  min-height: 0;
+}
+
+.cost-rec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.cost-rec-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  padding: 12px;
+}
+
+.cost-rec-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cost-rec-kind {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cost-rec-kind.rec-kind-memory { color: var(--accent-3); border-color: var(--accent-3); }
+.cost-rec-kind.rec-kind-cache  { color: var(--accent-2); border-color: var(--accent-2); }
+.cost-rec-kind.rec-kind-model  { color: var(--accent-1); border-color: var(--accent-1); }
+
+.cost-rec-savings {
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.cost-rec-title {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.cost-rec-rationale {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cost-rec-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-rec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.cost-rec-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.cost-rec-action:hover,
+.cost-rec-action:focus-visible {
+  background: var(--bg-elev-3);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.cost-pricing-footnote {
+  margin: 14px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* Empty state. */
+.cost-empty {
+  display: grid;
+  gap: 10px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+  padding: 22px;
+  margin-top: 6px;
+}
+
+.cost-empty h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.cost-empty p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.cost-empty-tools {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.cost-empty-tools li {
+  display: grid;
+  grid-template-columns: 14px auto 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.cost-empty-tools small {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Visually-hidden helper - retained accessible-name for the KPI strip.
+   The pane has no visible heading, but screen-reader users still
+   benefit from the explicit landmark label. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 960px) {
+  .cost-layout {
+    grid-template-columns: 1fr;
+  }
+  .cost-kpi-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .palette-backdrop,
@@ -1755,6 +2107,20 @@ body.light pre {
   font-size: 12px;
 }
 
+/* Phase 14B - the project-memory-roots row needs the textarea below
+ * the label rather than to the right; keep the same border treatment
+ * but stack vertically. */
+.settings-row.settings-row-stacked {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.settings-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .settings-tools-list {
   display: grid;
   gap: 6px;
@@ -2063,6 +2429,18 @@ body.light pre {
 .name-cell-title > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Phase 14B - inventory size / token chip rendered next to memory
+ * component names. Tertiary colour keeps it from competing with the
+ * filename; flex-shrink:0 stops the ellipsis on the title from
+ * truncating the chip when the row is narrow. */
+.size-chip {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 

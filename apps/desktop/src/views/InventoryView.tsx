@@ -6,6 +6,11 @@ import { parseSearchQuery } from "@/lib/parseFilter";
 import { toggleFilterPrefix } from "@/lib/filterChip";
 import { formatRelativeTime } from "@/lib/relativeTime";
 import {
+  estimateTokens,
+  formatBytes,
+  formatTokensK,
+} from "@/lib/tokens";
+import {
   FiltersIcon,
   SearchIcon,
   ShieldIcon,
@@ -117,6 +122,15 @@ const Row = memo(function Row({
   const severity =
     findingsTotal > 0 && findings ? highestSeverity(findings.bySeverity) : null;
 
+  // Phase 14B - size / cost chip rendered only for memory components.
+  // The walker (14A) populates `size` for every component but token
+  // cost only matters for the per-turn memory preamble; surfacing the
+  // chip on every row would add noise without informing decisions.
+  const showSizeChip = row.kind === "memory";
+  const sizeChipLabel = showSizeChip
+    ? `${formatBytes(row.size)} · ~${formatTokensK(estimateTokens(row.size))} tok`
+    : null;
+
   return (
     <button
       type="button"
@@ -143,6 +157,15 @@ const Row = memo(function Row({
               }`}
             >
               <ShieldIcon />
+            </span>
+          ) : null}
+          {sizeChipLabel ? (
+            <span
+              className="size-chip"
+              title="Approximate, based on ~4 chars/token. Real cost varies by tokenizer and content."
+              aria-label={`size ${sizeChipLabel}`}
+            >
+              {sizeChipLabel}
             </span>
           ) : null}
         </span>

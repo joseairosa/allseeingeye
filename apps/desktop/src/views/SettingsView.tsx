@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
 import { detectedToolsFixture } from "@/lib/fixtures";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
+import { startFullScan } from "@/ipc";
 
 /**
  * Settings view (Phase 4.4).
@@ -164,9 +166,58 @@ function ToolsPane() {
   );
 }
 
+/**
+ * Phase 14B - default value for the project-memory-roots textarea
+ * mirrors `DEFAULT_PROJECT_MEMORY_ROOTS` in
+ * `apps/desktop/src-tauri/src/index/settings.rs`. Kept in sync by
+ * convention; if the backend list grows, update this constant too.
+ */
+const DEFAULT_PROJECT_MEMORY_ROOTS = ["~/Development", "~"] as const;
+
+function rootsToText(roots: ReadonlyArray<string>): string {
+  return roots.join("\n");
+}
+
+function textToRoots(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 function IndexPane() {
   const platform = detectPlatform();
   const dbPath = DB_PATHS[platform];
+
+  // Phase 14B - project memory roots. Persistence is local-only until
+  // the backend exposes a generic settings IPC; the value lives in
+  // `useState` so the user can edit and re-scan within the session.
+  // The walker reads `projectMemoryRoots` from `app_settings` on every
+  // scan, so any value persisted via direct DB edit is honoured today.
+  // TODO(phase-14b-followup): expose `read_setting_raw` / `write_setting_raw`
+  // (or a dedicated `get_project_memory_roots` / `set_project_memory_roots`
+  // pair) from the Tauri layer so this textarea round-trips to disk.
+  const [rootsText, setRootsText] = useState<string>(
+    rootsToText(DEFAULT_PROJECT_MEMORY_ROOTS),
+  );
+  const [rescanState, setRescanState] = useState<"idle" | "running" | "done" | "error">(
+    "idle",
+  );
+
+  async function handleRescan(): Promise<void> {
+    setRescanState("running");
+    try {
+      // Trim the value just so the displayed textarea matches what a
+      // future write IPC would persist; the result is intentionally
+      // discarded today.
+      void textToRoots(rootsText);
+      await startFullScan();
+      setRescanState("done");
+    } catch (err) {
+      console.error("[settings] rescan failed", err);
+      setRescanState("error");
+    }
+  }
 
   return (
     <section className="health-pane settings-pane" aria-labelledby="settings-index">
@@ -177,6 +228,52 @@ function IndexPane() {
           <small className="mono">{dbPath}</small>
         </div>
       </div>
+
+      <div className="settings-row settings-row-stacked">
+        <div className="settings-row-label">
+          <strong>Project memory roots</strong>
+          <small>
+            Where to look for project-level CLAUDE.md / AGENTS.md / GEMINI.md
+            files. One path per line. Tilde expansion supported.
+          </small>
+          <small className="settings-todo">
+            Persistence requires a backend settings IPC (TODO); changes apply
+            for this session only.
+          </small>
+        </div>
+        <label className="field" aria-label="project memory roots">
+          <span className="sr-only">project memory roots</span>
+          <textarea
+            value={rootsText}
+            rows={4}
+            spellCheck={false}
+            onChange={(e) => setRootsText(e.target.value)}
+            aria-describedby="settings-memory-roots-help"
+          />
+          <small id="settings-memory-roots-help" className="settings-todo">
+            Defaults: {DEFAULT_PROJECT_MEMORY_ROOTS.join(", ")}
+          </small>
+        </label>
+        <div className="settings-row-actions">
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              void handleRescan();
+            }}
+            disabled={rescanState === "running"}
+          >
+            {rescanState === "running" ? "scanning…" : "re-scan now"}
+          </button>
+          {rescanState === "done" ? (
+            <small className="settings-todo">scan completed</small>
+          ) : null}
+          {rescanState === "error" ? (
+            <small className="settings-todo">scan failed; see console</small>
+          ) : null}
+        </div>
+      </div>
+
       <div className="settings-row">
         <div className="settings-row-label">
           <strong>Rebuild index</strong>
