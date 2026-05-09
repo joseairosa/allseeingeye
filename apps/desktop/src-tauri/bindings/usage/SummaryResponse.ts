@@ -9,4 +9,10 @@ export type SummaryResponse = { tokens30d: TokenTotals, costUsd30d: number, topP
  * `refreshed_at` of the most-recent row read. 0 when the table
  * is empty.
  */
-refreshedAt: bigint, };
+refreshedAt: bigint, 
+/**
+ * Snapshot identifier of the price table used to compute
+ * `cost_usd_30d`. Surfaced verbatim in the Cost view footer so
+ * the UI cannot drift from the actual prices that were applied.
+ */
+priceTableVersion: string, };

@@ -581,13 +581,20 @@ pub fn health_summary_inner(handle: &IndexHandle) -> crate::index::Result<Health
         let total_components: u32 = conn
             .query_row("SELECT COUNT(*) FROM component", [], |r| r.get::<_, i64>(0))
             .map(|v| u32::try_from(v).unwrap_or(u32::MAX))?;
-        let total_parse_errors: u32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM component WHERE parse_errors IS NOT NULL",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .map(|v| u32::try_from(v).unwrap_or(u32::MAX))?;
+        // The `parse_errors` column holds either a real parse failure
+        // or a validation outcome (which may be warnings-only). Filter
+        // by inspecting the JSON so warnings-only rows do not inflate
+        // the Health view's "parse errors" headline.
+        let mut error_stmt =
+            conn.prepare("SELECT parse_errors FROM component WHERE parse_errors IS NOT NULL")?;
+        let mut error_rows = error_stmt.query([])?;
+        let mut total_parse_errors: u32 = 0;
+        while let Some(row) = error_rows.next()? {
+            let raw: Option<String> = row.get(0)?;
+            if parse_errors_json_indicates_error(raw.as_deref()) {
+                total_parse_errors = total_parse_errors.saturating_add(1);
+            }
+        }
 
         let mut stmt = conn.prepare(
             "SELECT tool, type, COUNT(*) FROM component GROUP BY tool, type ORDER BY tool, type",
@@ -1288,10 +1295,46 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<ComponentSummary>
         size: u64::try_from(size).unwrap_or(0),
         mtime,
         hash,
-        has_parse_errors: parse_errors.is_some(),
+        has_parse_errors: parse_errors_json_indicates_error(parse_errors.as_deref()),
         last_used_at,
         use_count: u32::try_from(use_count).unwrap_or(0),
     })
+}
+
+/// Decide whether the `parse_errors` column should flip the row's
+/// "parse error" badge.
+///
+/// The column is misnamed: it carries either a hard parse failure
+/// (`{"kind": "parse", "message": "..."}`) OR a validation outcome
+/// (`{"kind": "validation", "errors": [...], "warnings": [...]}`).
+/// Validation rows with **only warnings** are NOT errors; the schemas
+/// run with `additionalProperties: true` precisely so unknown
+/// frontmatter fields surface as warnings, never as save-blocking
+/// errors. Treating the column as a boolean (`is_some()`) misclassified
+/// every memory file with a custom frontmatter key as broken.
+///
+/// The fix is purely on the read side: the column itself is unchanged
+/// so existing data keeps working, and any row that legitimately fails
+/// to parse still trips the badge.
+fn parse_errors_json_indicates_error(raw: Option<&str>) -> bool {
+    let Some(raw) = raw else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        // A row we cannot parse is itself broken; surface it.
+        return true;
+    };
+    // The only shape that should NOT trigger the badge is a validation
+    // row whose `errors` array is empty. Everything else (legacy rows
+    // without `kind`, hard parse failures, any future unknown kind) is
+    // treated as a real error so the badge surfaces.
+    if value.get("kind").and_then(serde_json::Value::as_str) == Some("validation") {
+        return value
+            .get("errors")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|arr| !arr.is_empty());
+    }
+    true
 }
 
 fn row_to_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<ComponentDetail> {
@@ -2270,6 +2313,67 @@ mod tests {
             }
             other => panic!("expected Saved on retry, got {other:?}"),
         }
+    }
+
+    // ─── parse_errors classifier ───────────────────────────────────────
+
+    #[test]
+    fn parse_errors_classifier_treats_validation_warnings_only_as_clean() {
+        // Validation outcome with zero errors and one warning is the
+        // common case (a memory file with a custom frontmatter key).
+        // It must not flip the row's "parse error" badge.
+        let payload = serde_json::json!({
+            "kind": "validation",
+            "errors": [],
+            "warnings": [{
+                "kind": "unknownField",
+                "path": "/preCommitHook",
+                "message": "unknown field `preCommitHook` (not in schema)",
+            }],
+        })
+        .to_string();
+        assert!(!parse_errors_json_indicates_error(Some(&payload)));
+    }
+
+    #[test]
+    fn parse_errors_classifier_treats_validation_errors_as_error() {
+        let payload = serde_json::json!({
+            "kind": "validation",
+            "errors": [{
+                "path": "/name",
+                "message": "field is required",
+                "schemaKeyword": "required",
+            }],
+            "warnings": [],
+        })
+        .to_string();
+        assert!(parse_errors_json_indicates_error(Some(&payload)));
+    }
+
+    #[test]
+    fn parse_errors_classifier_treats_parse_failures_as_error() {
+        let payload = serde_json::json!({ "kind": "parse", "message": "invalid JSON" }).to_string();
+        assert!(parse_errors_json_indicates_error(Some(&payload)));
+    }
+
+    #[test]
+    fn parse_errors_classifier_treats_pre_3_2_legacy_rows_as_error() {
+        // Pre-3.2 rows had no `kind` field and were always parse
+        // failures. Preserve that compatibility shape.
+        let payload = serde_json::json!({ "message": "boom" }).to_string();
+        assert!(parse_errors_json_indicates_error(Some(&payload)));
+    }
+
+    #[test]
+    fn parse_errors_classifier_treats_garbage_json_as_error() {
+        // A row we cannot deserialise is itself broken; surfacing the
+        // badge is the safer default.
+        assert!(parse_errors_json_indicates_error(Some("not-json")));
+    }
+
+    #[test]
+    fn parse_errors_classifier_treats_null_column_as_clean() {
+        assert!(!parse_errors_json_indicates_error(None));
     }
 
     // ─── Phase 14B - app settings IPC ──────────────────────────────────

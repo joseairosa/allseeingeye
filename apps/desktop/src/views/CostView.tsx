@@ -32,16 +32,13 @@ import { CostRecommendations } from "./cost/CostRecommendations";
 import { formatRefreshedAgo } from "./cost/format";
 
 /**
- * Pricing snapshot version. The Rust side carries a
- * `PRICE_TABLE_VERSION` constant of "2026-05" (`apps/desktop/src-tauri
- * /src/usage/pricing.rs`); we hard-code the same string here until the
- * IPC surface exposes a `priceTableVersion` field on `SummaryResponse`.
- *
- * TODO(14C-frontend follow-up): expose the version through `usage_query`
- * (e.g. as a top-level field on `SummaryResponse`) and read it here so a
- * pricing table update doesn't drift between Rust and TS.
+ * Fallback rendered before the first summary payload lands. The
+ * authoritative version comes from `summary.data.priceTableVersion`
+ * (sourced from `apps/desktop/src-tauri/src/usage/pricing.rs::
+ * PRICE_TABLE_VERSION`). The fallback only ever shows for the brief
+ * window between mount and first IPC response.
  */
-const PRICE_TABLE_VERSION = "2026-05";
+const FALLBACK_PRICE_TABLE_VERSION = "loading";
 
 export function CostView(): React.ReactElement {
   const view = useUi((s) => s.view);
@@ -128,7 +125,9 @@ export function CostView(): React.ReactElement {
             </div>
           </div>
           <p className="cost-pricing-footnote" role="note">
-            Pricing snapshot: {PRICE_TABLE_VERSION}. Verify before quoting.
+            Pricing snapshot:{" "}
+            {summary.data?.priceTableVersion ?? FALLBACK_PRICE_TABLE_VERSION}.
+            Verify before quoting.
           </p>
         </>
       )}

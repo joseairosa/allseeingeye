@@ -48,6 +48,10 @@ pub struct SummaryResponse {
     /// `refreshed_at` of the most-recent row read. 0 when the table
     /// is empty.
     pub refreshed_at: i64,
+    /// Snapshot identifier of the price table used to compute
+    /// `cost_usd_30d`. Surfaced verbatim in the Cost view footer so
+    /// the UI cannot drift from the actual prices that were applied.
+    pub price_table_version: String,
 }
 
 /// One row in `kind = "byProject"`.
@@ -158,6 +162,7 @@ pub fn summary(index: &IndexHandle, today_unix: i64) -> IndexResult<SummaryRespo
             top_project,
             top_project_cost,
             refreshed_at,
+            price_table_version: super::pricing::PRICE_TABLE_VERSION.to_owned(),
         })
     })
 }
