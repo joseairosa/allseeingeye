@@ -41,20 +41,33 @@ fn backup_then_restore_real_components_round_trips() {
     // on macOS, `${XDG_DATA_HOME:-~/.local/share}/` on Linux,
     // `%APPDATA%/` on Windows. We try the macOS path first and fall
     // back to the XDG dir for Linux developers.
-    let db_path = resolve_index_db_path(&home);
-    if !db_path.exists() {
+    let prod_db_path = resolve_index_db_path(&home);
+    if !prod_db_path.exists() {
         eprintln!(
             "skip: no production index at {} (run the app at least once before this test)",
-            db_path.display(),
+            prod_db_path.display(),
         );
         return;
     }
 
-    // Open the production index. It is read-only for this test
-    // because we never delete or modify the source rows; the backup
-    // module writes only into `app_settings` (cached public key) and
-    // the new `backup_manifest` table.
-    let index = Arc::new(IndexHandle::open(&db_path).expect("open production index"));
+    // Audit issue #23: this test used to open the production index
+    // read-write and the orchestrator wrote 88 manifest rows + a
+    // cached public key into the user's actual database. The blobs
+    // landed in a tempdir which got cleaned up after the test, but
+    // the manifest rows persisted forever and broke the user's first
+    // real backup attempt (the idempotency skip logic saw "already
+    // backed up" and refused to write fresh blobs).
+    //
+    // Fix: copy the production DB into a tempdir and open the copy.
+    // SQLite WAL mode means we copy the `-wal` and `-shm` sidecars
+    // too if they exist, then checkpoint inside the copy so reads
+    // see consistent state. The tempdir is dropped at end of test;
+    // the production DB is never touched.
+    let temp_db_dir = tempfile::tempdir().expect("tempdir for index copy");
+    let db_path = temp_db_dir.path().join("index.sqlite");
+    copy_sqlite_with_sidecars(&prod_db_path, &db_path);
+
+    let index = Arc::new(IndexHandle::open(&db_path).expect("open index copy"));
 
     // Snapshot every component_id + path BEFORE we touch the disk.
     let snapshot = snapshot_components(&index);
@@ -63,9 +76,9 @@ fn backup_then_restore_real_components_round_trips() {
         return;
     }
     eprintln!(
-        "running backup against {} indexed components from {}",
+        "running backup against {} indexed components (copied from {} to test tempdir)",
         snapshot.len(),
-        db_path.display(),
+        prod_db_path.display(),
     );
 
     // Snapshot the original bytes for every component file we will
@@ -115,6 +128,31 @@ fn backup_then_restore_real_components_round_trips() {
         // hitting the keychain, but we can still drive the full
         // surface via the orchestrator's test seam:
         backup_then_restore_with_in_memory_keychain(&index, &storage, &original_bytes, &snapshot);
+    }
+}
+
+/// Copy a `SQLite` database to a new path, including any `-wal` /
+/// `-shm` sidecars that exist alongside it. Used by the integration
+/// test (issue #23) to operate on a copy of the production DB so
+/// the test never mutates the user's actual data.
+///
+/// The copy is best-effort on the sidecars - they may not exist if
+/// the source DB is in rollback-journal mode rather than WAL, in
+/// which case we just copy the main file. If the source happens to
+/// have an in-flight WAL, the `SQLite` open call on the copy will
+/// auto-checkpoint; since the test is read-mostly that is fine.
+fn copy_sqlite_with_sidecars(src: &std::path::Path, dst: &std::path::Path) {
+    fs::copy(src, dst).expect("copy main db file");
+    let src_str = src.to_string_lossy().into_owned();
+    let dst_str = dst.to_string_lossy().into_owned();
+    for suffix in ["-wal", "-shm"] {
+        let src_side = PathBuf::from(format!("{src_str}{suffix}"));
+        if src_side.exists() {
+            let dst_side = PathBuf::from(format!("{dst_str}{suffix}"));
+            // Sidecar copy failure is non-fatal; the main DB is the
+            // source of truth and SQLite recovers from missing WAL.
+            let _ = fs::copy(&src_side, &dst_side);
+        }
     }
 }
 
