@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
 import { detectedToolsFixture } from "@/lib/fixtures";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
-import { rebuildIndex, startFullScan } from "@/ipc";
+import { rebuildIndex, resetIndex, startFullScan } from "@/ipc";
 import {
   useProjectMemoryRoots,
   useSetProjectMemoryRoots,
@@ -215,6 +215,7 @@ function IndexPane() {
   const [rootsTouched, setRootsTouched] = useState(false);
   const [rescanState, setRescanState] = useState<IndexActionState>("idle");
   const [rebuildState, setRebuildState] = useState<IndexActionState>("idle");
+  const [resetState, setResetState] = useState<IndexActionState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync the textarea with the persisted value when it loads, but never
@@ -275,6 +276,27 @@ function IndexPane() {
     } catch (err) {
       console.error("[settings] rebuild failed", err);
       setRebuildState("error");
+    }
+  }
+
+  // Issue #7 - "Reset" is the destructive sibling: wipes everything,
+  // including user preferences. The confirm copy is stronger than
+  // rebuild's so a misclick is harder.
+  async function handleReset(): Promise<void> {
+    if (typeof window !== "undefined" && window.confirm) {
+      const ok = window.confirm(
+        "This will wipe ALL local index data including settings. Continue?",
+      );
+      if (!ok) return;
+    }
+    setResetState("running");
+    try {
+      await resetIndex();
+      setResetState("done");
+      void qc.invalidateQueries();
+    } catch (err) {
+      console.error("[settings] reset failed", err);
+      setResetState("error");
     }
   }
 
@@ -367,7 +389,7 @@ function IndexPane() {
           onClick={() => {
             void handleRebuild();
           }}
-          disabled={rebuildState === "running"}
+          disabled={rebuildState === "running" || resetState === "running"}
         >
           {rebuildState === "running" ? "rebuilding…" : "rebuild"}
         </button>
@@ -376,13 +398,26 @@ function IndexPane() {
         <div className="settings-row-label">
           <strong>Reset index</strong>
           <small>Drops all indexed components and starts fresh.</small>
+          {resetState === "done" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              reset complete
+            </small>
+          ) : null}
+          {resetState === "error" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              reset failed; see console
+            </small>
+          ) : null}
         </div>
         <button
           type="button"
           className="text-button quiet"
-          // TODO(phase-1.6): invoke('reset_index')
+          onClick={() => {
+            void handleReset();
+          }}
+          disabled={resetState === "running" || rebuildState === "running"}
         >
-          reset
+          {resetState === "running" ? "resetting…" : "reset"}
         </button>
       </div>
     </section>

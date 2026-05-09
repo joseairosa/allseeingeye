@@ -1,7 +1,7 @@
 //! Index data wipers.
 //!
-//! Helpers backing the Settings -> Index "rebuild" button (audit issue
-//! #5):
+//! Two destructive helpers backing the Settings -> Index "rebuild" and
+//! "reset" buttons (audit issues #5 and #7):
 //!
 //! * [`wipe_index_data`] - drop every row from the indexed-content
 //!   tables (`component`, `component_fts`, `relation`, `tag`, `pin`,
@@ -9,8 +9,11 @@
 //!   `security_finding_suppression`, `token_usage`,
 //!   `usage_session_watermark`). Schema and `app_settings` are kept so
 //!   the next scan repopulates with the same configuration.
+//! * [`wipe_all_state`] - everything `wipe_index_data` does, plus the
+//!   user's preferences (`app_settings`). Schema is preserved so the
+//!   handle stays usable; the database file itself is not deleted.
 //!
-//! The wipe runs inside a single transaction so a partial failure
+//! Both helpers run inside a single transaction so a partial failure
 //! never leaves the index in a half-cleared state. Foreign-key cascades
 //! mean we only need to delete from the parent tables, but we delete
 //! from every content table explicitly so the wipe is auditable from
@@ -45,6 +48,11 @@ const CONTENT_TABLES: &[&str] = &[
     "usage_session_watermark",
 ];
 
+/// Tables that hold *user preferences*. Distinct from `CONTENT_TABLES`
+/// so `wipe_index_data` can keep them while `wipe_all_state` drops
+/// them.
+const SETTINGS_TABLES: &[&str] = &["app_settings"];
+
 /// Wipe every indexed-content row but keep user preferences.
 ///
 /// Called by the `rebuild_index` IPC. The next full scan repopulates
@@ -54,6 +62,18 @@ const CONTENT_TABLES: &[&str] = &[
 pub fn wipe_index_data(handle: &IndexHandle) -> Result<()> {
     handle.write(|conn| {
         delete_from_tables(conn, CONTENT_TABLES)?;
+        Ok(())
+    })
+}
+
+/// Wipe every indexed-content row *and* every user preference.
+///
+/// Called by the `reset_index` IPC. The next launch behaves as a fresh
+/// install: detection runs with all defaults.
+pub fn wipe_all_state(handle: &IndexHandle) -> Result<()> {
+    handle.write(|conn| {
+        delete_from_tables(conn, CONTENT_TABLES)?;
+        delete_from_tables(conn, SETTINGS_TABLES)?;
         Ok(())
     })
 }
@@ -192,5 +212,29 @@ mod tests {
         assert_eq!(count_rows(&handle, "component_fts"), 1);
         wipe_index_data(&handle).expect("wipe");
         assert_eq!(count_rows(&handle, "component_fts"), 0);
+    }
+
+    #[test]
+    fn wipe_all_state_drops_content_and_settings() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_minimal_state(&handle);
+
+        wipe_all_state(&handle).expect("wipe");
+
+        assert_eq!(count_rows(&handle, "component"), 0);
+        assert_eq!(count_rows(&handle, "security_finding"), 0);
+        // Reset wipes preferences too - next launch behaves as a fresh
+        // install.
+        assert_eq!(count_rows(&handle, "app_settings"), 0);
+    }
+
+    /// `wipe_all_state` must also be idempotent so a double-click on
+    /// "reset" does not error.
+    #[test]
+    fn wipe_all_state_is_idempotent() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        wipe_all_state(&handle).expect("first wipe");
+        wipe_all_state(&handle).expect("second wipe");
+        assert_eq!(count_rows(&handle, "app_settings"), 0);
     }
 }

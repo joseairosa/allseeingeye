@@ -274,3 +274,12 @@ export async function checkPathReadable(path: string): Promise<boolean> {
 export async function rebuildIndex(): Promise<ScanReport> {
   return invoke<ScanReport>("rebuild_index");
 }
+
+/**
+ * Drop every indexed-content row *and* every persisted user preference.
+ * Schema is preserved; the database file remains valid. The caller is
+ * responsible for triggering a re-scan if one is desired.
+ */
+export async function resetIndex(): Promise<void> {
+  return invoke<void>("reset_index");
+}

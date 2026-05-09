@@ -222,6 +222,7 @@ pub fn run() {
             // Audit follow-ups - Settings + Onboarding wiring.
             ipc::commands::check_path_readable,
             ipc::commands::rebuild_index,
+            ipc::commands::reset_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -409,6 +409,23 @@ pub async fn rebuild_index(
     .map_err(|e| format!("rebuild_index task panicked: {e}"))?
 }
 
+/// Drop every indexed-content row *and* every persisted user preference.
+///
+/// Backs the Settings -> Index "reset" button (issue #7). After a
+/// reset the database file is empty (schema preserved), and the next
+/// launch behaves as a fresh install. The IPC does NOT trigger a
+/// re-scan; the caller decides whether to follow up with one. Returns
+/// `()` because the post-condition is purely about absence of state.
+#[tauri::command]
+pub async fn reset_index(state: State<'_, Arc<IndexHandle>>) -> Result<(), String> {
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::index::wipe::wipe_all_state(&index).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("reset_index task panicked: {e}"))?
+}
+
 // ─── Pure functions exercised by tests ──────────────────────────────────
 
 /// Fetch a paginated, filtered list of `ComponentSummary` rows.
