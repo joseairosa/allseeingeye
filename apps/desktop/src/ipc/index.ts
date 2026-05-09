@@ -252,3 +252,15 @@ export async function getProjectMemoryRoots(): Promise<string[]> {
 export async function setProjectMemoryRoots(roots: string[]): Promise<void> {
   return invoke<void>("set_project_memory_roots", { roots });
 }
+
+// ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────
+
+/**
+ * Probe whether a path is readable from the desktop process. The
+ * onboarding "Allow read access" step uses this to decide whether to
+ * surface the macOS Full Disk Access deep link. Returns `false` for
+ * any error (`NotFound`, `PermissionDenied`, ...).
+ */
+export async function checkPathReadable(path: string): Promise<boolean> {
+  return invoke<boolean>("check_path_readable", { path });
+}

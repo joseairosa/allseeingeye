@@ -359,6 +359,34 @@ pub fn set_project_memory_roots_inner(
     write_setting_raw(handle, KEY_PROJECT_MEMORY_ROOTS, &value).map_err(|e| e.to_string())
 }
 
+// ─── Audit follow-ups - Settings + Onboarding wiring ───────────────────
+
+/// Probe the local filesystem for read access to `path`.
+///
+/// Onboarding's permission step (issue #17) calls this for each detected
+/// tool's root path so the macOS Full Disk Access deep link only fires
+/// when at least one path is actually unreadable. The probe is the
+/// thinnest possible wrapper around `std::fs::metadata` - any error
+/// (`NotFound`, `PermissionDenied`, ...) yields `false`. Symlinks are
+/// followed, matching what the watcher / scanner do later.
+///
+/// Returns `bool` directly because the caller never needs to
+/// distinguish error kinds; the granular surface is best left to the
+/// existing `Tools` view.
+#[tauri::command]
+#[must_use]
+pub fn check_path_readable(path: String) -> bool {
+    check_path_readable_inner(&path)
+}
+
+/// Test seam for `check_path_readable`. Pure function so unit tests
+/// drive every branch (existing dir, missing path, file vs dir, ...)
+/// without a Tauri runtime.
+#[must_use]
+pub fn check_path_readable_inner(path: &str) -> bool {
+    std::fs::metadata(path).is_ok()
+}
+
 // ─── Pure functions exercised by tests ──────────────────────────────────
 
 /// Fetch a paginated, filtered list of `ComponentSummary` rows.
@@ -2422,5 +2450,45 @@ mod tests {
         // persisted.
         let roots = read_project_memory_roots(&handle);
         assert_eq!(roots, vec!["~/Development".to_owned(), "~".to_owned()]);
+    }
+
+    // ─── Audit follow-ups - check_path_readable (issue #17) ─────────────
+
+    /// An existing directory should always read as readable. The
+    /// onboarding step renders this as "no permission prompt needed".
+    #[test]
+    fn check_path_readable_returns_true_for_existing_dir() {
+        let dir = tempdir().expect("tempdir");
+        assert!(check_path_readable_inner(&dir.path().to_string_lossy()));
+    }
+
+    /// An existing regular file is also readable - we accept either; the
+    /// onboarding paths point at directories in practice but the
+    /// contract is "can we stat it".
+    #[test]
+    fn check_path_readable_returns_true_for_existing_file() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        fs::write(&path, b"{}").expect("write");
+        assert!(check_path_readable_inner(&path.to_string_lossy()));
+    }
+
+    /// A missing path must yield `false` so the onboarding step shows
+    /// the "grant access" branch on macOS (and stays continue-only on
+    /// Linux/Windows since the deep link never fires there anyway).
+    #[test]
+    fn check_path_readable_returns_false_for_missing_path() {
+        let dir = tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+        assert!(!check_path_readable_inner(&missing.to_string_lossy()));
+    }
+
+    /// Empty input is treated as "not readable" - matches what the OS
+    /// returns for a `metadata("")` call across all three platforms and
+    /// keeps the onboarding step from silently passing on a
+    /// configuration bug.
+    #[test]
+    fn check_path_readable_returns_false_for_empty_string() {
+        assert!(!check_path_readable_inner(""));
     }
 }

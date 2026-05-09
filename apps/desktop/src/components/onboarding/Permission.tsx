@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { checkPathReadable } from "@/ipc";
 import type { OnboardingStepProps } from "./types";
 
 /**
@@ -8,20 +10,25 @@ import type { OnboardingStepProps } from "./types";
 const MAC_FDA_DEEP_LINK =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 
-/**
- * Placeholder reachability check. The Tauri shell command that probes
- * `fs::metadata` per path lands in a later phase; for now we assume the
- * user can read everything inside their own home directory.
- *
- * TODO(phase-x): replace with a Rust-side `is_path_readable` IPC.
- */
-function isPathReadable(_path: string): boolean {
-  return true;
-}
+/** Long stale time - readability rarely changes within an onboarding session. */
+const STALE_PERMISSION_MS = 60_000;
 
 function isMac(): boolean {
   if (typeof navigator === "undefined") return false;
   return navigator.platform.toLowerCase().includes("mac");
+}
+
+/**
+ * Probe each candidate path through the `check_path_readable` Tauri
+ * command. Batched into a single `useQuery` (one IPC roundtrip per
+ * path, but a single React re-render) so onboarding doesn't fan out
+ * into N tiny queries.
+ */
+async function probePaths(paths: string[]): Promise<Record<string, boolean>> {
+  const entries = await Promise.all(
+    paths.map(async (path) => [path, await checkPathReadable(path)] as const),
+  );
+  return Object.fromEntries(entries);
 }
 
 /**
@@ -39,7 +46,24 @@ export function Permission({ state, actions, tools }: OnboardingStepProps) {
     return [...acc].sort();
   }, [tools, state.enabledTools]);
 
-  const allReadable = paths.every(isPathReadable);
+  // Phase audit / issue #17 - the previous placeholder always returned
+  // `true`, which made the macOS Full Disk Access deep link
+  // unreachable. Probe each path through the Rust-side IPC so the
+  // "grant access" button surfaces when at least one path is not
+  // readable. Default to `true` while the probe is in flight so the
+  // continue button is not disabled on a fast first paint.
+  const probe = useQuery({
+    queryKey: ["onboarding", "permission", paths] as const,
+    queryFn: () => probePaths(paths),
+    enabled: paths.length > 0,
+    staleTime: STALE_PERMISSION_MS,
+  });
+
+  const allReadable = useMemo(() => {
+    if (paths.length === 0) return true;
+    if (!probe.data) return true;
+    return paths.every((p) => probe.data[p] !== false);
+  }, [paths, probe.data]);
   const onMac = isMac();
 
   function handleGrant(): void {
