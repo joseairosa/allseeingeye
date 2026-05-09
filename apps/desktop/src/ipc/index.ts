@@ -264,3 +264,13 @@ export async function setProjectMemoryRoots(roots: string[]): Promise<void> {
 export async function checkPathReadable(path: string): Promise<boolean> {
   return invoke<boolean>("check_path_readable", { path });
 }
+
+/**
+ * Drop every indexed-content row and re-run a full scan. User
+ * preferences (`app_settings`) are preserved across the rebuild so the
+ * re-scan reuses the configured project memory roots, excluded tool
+ * ids, etc. Resolves with the resulting `ScanReport`.
+ */
+export async function rebuildIndex(): Promise<ScanReport> {
+  return invoke<ScanReport>("rebuild_index");
+}

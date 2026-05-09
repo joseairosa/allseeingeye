@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
 import { detectedToolsFixture } from "@/lib/fixtures";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
-import { startFullScan } from "@/ipc";
+import { rebuildIndex, startFullScan } from "@/ipc";
 import {
   useProjectMemoryRoots,
   useSetProjectMemoryRoots,
@@ -189,9 +190,19 @@ function textToRoots(text: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+/**
+ * State machine for an asynchronous index-write button (rebuild,
+ * reset, full re-scan). Centralised because every button on the Index
+ * pane uses the same shape: idle -> running -> done|error, with the
+ * `done` and `error` states giving a small status line for screen
+ * readers.
+ */
+type IndexActionState = "idle" | "running" | "done" | "error";
+
 function IndexPane() {
   const platform = detectPlatform();
   const dbPath = DB_PATHS[platform];
+  const qc = useQueryClient();
 
   // Phase 14B - project memory roots. The textarea is the editing
   // surface; persistence rounds through the `get_project_memory_roots`
@@ -202,9 +213,8 @@ function IndexPane() {
   const setRootsMutation = useSetProjectMemoryRoots();
   const [rootsText, setRootsText] = useState<string>("");
   const [rootsTouched, setRootsTouched] = useState(false);
-  const [rescanState, setRescanState] = useState<
-    "idle" | "running" | "done" | "error"
-  >("idle");
+  const [rescanState, setRescanState] = useState<IndexActionState>("idle");
+  const [rebuildState, setRebuildState] = useState<IndexActionState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync the textarea with the persisted value when it loads, but never
@@ -240,6 +250,31 @@ function IndexPane() {
     } catch (err) {
       console.error("[settings] rescan failed", err);
       setRescanState("error");
+    }
+  }
+
+  // Issue #5 - "Rebuild" wipes the indexed content but keeps user
+  // preferences and re-runs a full scan. The double-click confirm is a
+  // window.confirm() because Tauri's dialog plugin is opt-in per call
+  // and the existing onboarding / panic flows already use the native
+  // browser prompt.
+  async function handleRebuild(): Promise<void> {
+    if (typeof window !== "undefined" && window.confirm) {
+      const ok = window.confirm(
+        "This will wipe and rebuild the local index. Components stay on disk. Continue?",
+      );
+      if (!ok) return;
+    }
+    setRebuildState("running");
+    try {
+      await rebuildIndex();
+      setRebuildState("done");
+      // Every cache could have changed; a blanket invalidation is
+      // simpler than enumerating each query key here.
+      void qc.invalidateQueries();
+    } catch (err) {
+      console.error("[settings] rebuild failed", err);
+      setRebuildState("error");
     }
   }
 
@@ -315,13 +350,26 @@ function IndexPane() {
         <div className="settings-row-label">
           <strong>Rebuild index</strong>
           <small>Re-parses every file in every detected root.</small>
+          {rebuildState === "done" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              rebuild complete
+            </small>
+          ) : null}
+          {rebuildState === "error" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              rebuild failed; see console
+            </small>
+          ) : null}
         </div>
         <button
           type="button"
           className="text-button"
-          // TODO(phase-1.6): invoke('rebuild_index')
+          onClick={() => {
+            void handleRebuild();
+          }}
+          disabled={rebuildState === "running"}
         >
-          rebuild
+          {rebuildState === "running" ? "rebuilding…" : "rebuild"}
         </button>
       </div>
       <div className="settings-row">

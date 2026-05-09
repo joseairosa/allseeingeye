@@ -20,6 +20,7 @@ pub mod settings;
 #[cfg(test)]
 mod soak;
 pub mod upsert;
+pub mod wipe;
 
 use std::path::PathBuf;
 

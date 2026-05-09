@@ -221,6 +221,7 @@ pub fn run() {
             ipc::commands::set_project_memory_roots,
             // Audit follow-ups - Settings + Onboarding wiring.
             ipc::commands::check_path_readable,
+            ipc::commands::rebuild_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

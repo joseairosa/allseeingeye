@@ -387,6 +387,28 @@ pub fn check_path_readable_inner(path: &str) -> bool {
     std::fs::metadata(path).is_ok()
 }
 
+/// Drop every indexed-content row and re-run a full scan.
+///
+/// Backs the Settings -> Index "rebuild" button (issue #5). Preserves
+/// `app_settings` (project memory roots, excluded tool ids, ...) so the
+/// re-scan reuses the user's preferences. The rebuild runs on a
+/// blocking task so the Tauri command runtime never stalls; the
+/// awaited promise resolves with the resulting `ScanReport`.
+#[tauri::command]
+pub async fn rebuild_index(
+    state: State<'_, Arc<IndexHandle>>,
+    scan_ctx: State<'_, ScanContext>,
+) -> Result<ScanReport, String> {
+    let index = state.inner().clone();
+    let ctx = scan_ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::index::wipe::wipe_index_data(&index).map_err(|e| e.to_string())?;
+        ctx.full_scan().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("rebuild_index task panicked: {e}"))?
+}
+
 // ─── Pure functions exercised by tests ──────────────────────────────────
 
 /// Fetch a paginated, filtered list of `ComponentSummary` rows.
