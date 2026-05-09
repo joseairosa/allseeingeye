@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
 import { detectedToolsFixture } from "@/lib/fixtures";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
 import { startFullScan } from "@/ipc";
+import {
+  useProjectMemoryRoots,
+  useSetProjectMemoryRoots,
+} from "@/ipc/hooks";
 
 /**
  * Settings view (Phase 4.4).
@@ -189,28 +193,48 @@ function IndexPane() {
   const platform = detectPlatform();
   const dbPath = DB_PATHS[platform];
 
-  // Phase 14B - project memory roots. Persistence is local-only until
-  // the backend exposes a generic settings IPC; the value lives in
-  // `useState` so the user can edit and re-scan within the session.
-  // The walker reads `projectMemoryRoots` from `app_settings` on every
-  // scan, so any value persisted via direct DB edit is honoured today.
-  // TODO(phase-14b-followup): expose `read_setting_raw` / `write_setting_raw`
-  // (or a dedicated `get_project_memory_roots` / `set_project_memory_roots`
-  // pair) from the Tauri layer so this textarea round-trips to disk.
-  const [rootsText, setRootsText] = useState<string>(
-    rootsToText(DEFAULT_PROJECT_MEMORY_ROOTS),
-  );
-  const [rescanState, setRescanState] = useState<"idle" | "running" | "done" | "error">(
-    "idle",
-  );
+  // Phase 14B - project memory roots. The textarea is the editing
+  // surface; persistence rounds through the `get_project_memory_roots`
+  // / `set_project_memory_roots` Tauri commands. The walker reads the
+  // same `app_settings.projectMemoryRoots` row on every scan, so a
+  // saved change takes effect on the next "re-scan now".
+  const rootsQuery = useProjectMemoryRoots();
+  const setRootsMutation = useSetProjectMemoryRoots();
+  const [rootsText, setRootsText] = useState<string>("");
+  const [rootsTouched, setRootsTouched] = useState(false);
+  const [rescanState, setRescanState] = useState<
+    "idle" | "running" | "done" | "error"
+  >("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Sync the textarea with the persisted value when it loads, but never
+  // overwrite an in-progress edit.
+  useEffect(() => {
+    if (rootsQuery.data && !rootsTouched) {
+      setRootsText(rootsToText(rootsQuery.data));
+    }
+  }, [rootsQuery.data, rootsTouched]);
+
+  const persistedText = rootsQuery.data
+    ? rootsToText(rootsQuery.data)
+    : rootsToText(DEFAULT_PROJECT_MEMORY_ROOTS);
+  const dirty = rootsTouched && rootsText !== persistedText;
+
+  async function handleSave(): Promise<void> {
+    const cleaned = textToRoots(rootsText);
+    setSaveError(null);
+    try {
+      await setRootsMutation.mutateAsync(cleaned);
+      setRootsTouched(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(msg);
+    }
+  }
 
   async function handleRescan(): Promise<void> {
     setRescanState("running");
     try {
-      // Trim the value just so the displayed textarea matches what a
-      // future write IPC would persist; the result is intentionally
-      // discarded today.
-      void textToRoots(rootsText);
       await startFullScan();
       setRescanState("done");
     } catch (err) {
@@ -236,10 +260,6 @@ function IndexPane() {
             Where to look for project-level CLAUDE.md / AGENTS.md / GEMINI.md
             files. One path per line. Tilde expansion supported.
           </small>
-          <small className="settings-todo">
-            Persistence requires a backend settings IPC (TODO); changes apply
-            for this session only.
-          </small>
         </div>
         <label className="field" aria-label="project memory roots">
           <span className="sr-only">project memory roots</span>
@@ -247,7 +267,10 @@ function IndexPane() {
             value={rootsText}
             rows={4}
             spellCheck={false}
-            onChange={(e) => setRootsText(e.target.value)}
+            onChange={(e) => {
+              setRootsText(e.target.value);
+              setRootsTouched(true);
+            }}
             aria-describedby="settings-memory-roots-help"
           />
           <small id="settings-memory-roots-help" className="settings-todo">
@@ -259,17 +282,31 @@ function IndexPane() {
             type="button"
             className="text-button"
             onClick={() => {
+              void handleSave();
+            }}
+            disabled={!dirty || setRootsMutation.isPending}
+          >
+            {setRootsMutation.isPending ? "saving…" : "save"}
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
               void handleRescan();
             }}
-            disabled={rescanState === "running"}
+            disabled={rescanState === "running" || dirty}
+            title={dirty ? "save changes before re-scanning" : undefined}
           >
             {rescanState === "running" ? "scanning…" : "re-scan now"}
           </button>
-          {rescanState === "done" ? (
+          {rescanState === "done" && !dirty ? (
             <small className="settings-todo">scan completed</small>
           ) : null}
           {rescanState === "error" ? (
             <small className="settings-todo">scan failed; see console</small>
+          ) : null}
+          {saveError ? (
+            <small className="settings-todo">save failed: {saveError}</small>
           ) : null}
         </div>
       </div>

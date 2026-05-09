@@ -66,7 +66,6 @@ pub fn read_setting_raw(handle: &IndexHandle, key: &str) -> Result<Option<JsonVa
 }
 
 /// Write a setting. Replaces any existing row.
-#[allow(dead_code)]
 pub fn write_setting_raw(handle: &IndexHandle, key: &str, value: &JsonValue) -> Result<()> {
     let serialised = value.to_string();
     handle.write(|conn| {

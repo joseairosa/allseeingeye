@@ -50,6 +50,8 @@ import {
   unsuppressFinding,
   usageQuery,
   usageRefresh,
+  getProjectMemoryRoots,
+  setProjectMemoryRoots,
 } from "./index";
 import { subscribeToPipelineEvents } from "./events";
 
@@ -74,6 +76,8 @@ export const QUERY_KEYS = {
   componentFindingsCounts: ["componentFindingsCounts"] as const,
   /** Phase 14C - per-`CostQuery` payloads driving the Cost view. */
   cost: ["cost"] as const,
+  /** Phase 14B - app settings reads (project memory roots, ...). */
+  settings: ["settings"] as const,
 } as const;
 
 const STALE_TOOLS_MS = 30_000;
@@ -476,6 +480,41 @@ export function useCostRefresh(): UseMutationResult<bigint, Error, void> {
     mutationFn: () => usageRefresh(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.cost });
+    },
+  });
+}
+
+// ─── Phase 14B - app settings ──────────────────────────────────────────
+
+/**
+ * Read the configured project-memory walker roots. Backend always
+ * returns a non-empty list (defaults applied server-side), so callers
+ * do not need to handle empty.
+ */
+export function useProjectMemoryRoots(): UseQueryResult<string[], Error> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.settings, "projectMemoryRoots"] as const,
+    queryFn: () => getProjectMemoryRoots(),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Persist project-memory roots and invalidate the read query so the
+ * Settings textarea reflects the durable state on success.
+ */
+export function useSetProjectMemoryRoots(): UseMutationResult<
+  void,
+  Error,
+  string[]
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (roots: string[]) => setProjectMemoryRoots(roots),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: [...QUERY_KEYS.settings, "projectMemoryRoots"] as const,
+      });
     },
   });
 }

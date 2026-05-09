@@ -231,3 +231,24 @@ export async function usageRefresh(): Promise<bigint> {
   const raw = await invoke<number | bigint>("usage_refresh");
   return typeof raw === "bigint" ? raw : BigInt(raw);
 }
+
+// ─── Phase 14B - app settings ─────────────────────────────────────────
+
+/**
+ * Read the configured project-memory walker roots. Falls back to
+ * `["~/Development", "~"]` server-side when the row is missing or
+ * malformed, so the response is always a non-empty array.
+ */
+export async function getProjectMemoryRoots(): Promise<string[]> {
+  return invoke<string[]>("get_project_memory_roots");
+}
+
+/**
+ * Persist a new list of project-memory walker roots. Empty / whitespace
+ * entries are stripped server-side; the call rejects if the resulting
+ * list is empty (writing `[]` would resolve to defaults on read, which
+ * would silently undo the user's edit).
+ */
+export async function setProjectMemoryRoots(roots: string[]): Promise<void> {
+  return invoke<void>("set_project_memory_roots", { roots });
+}

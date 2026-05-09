@@ -216,6 +216,9 @@ pub fn run() {
             // Phase 14C - token usage analytics.
             ipc::commands::usage_query,
             ipc::commands::usage_refresh,
+            // Phase 14B - app settings (project memory roots).
+            ipc::commands::get_project_memory_roots,
+            ipc::commands::set_project_memory_roots,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

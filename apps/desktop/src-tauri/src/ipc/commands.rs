@@ -27,6 +27,9 @@ use super::types::{
     ToolHealthCount,
 };
 use crate::fs::safe_atomic_write_with_options;
+use crate::index::settings::{
+    read_project_memory_roots, write_setting_raw, KEY_PROJECT_MEMORY_ROOTS,
+};
 use crate::index::upsert::{parse_component_type, parse_scope, parse_tool_id};
 use crate::index::{upsert_component, IndexHandle};
 use crate::parser::{hash, parse_bytes};
@@ -301,6 +304,59 @@ pub async fn usage_refresh(state: State<'_, Arc<IndexHandle>>) -> Result<i64, St
     })
     .await
     .map_err(|e| format!("usage_refresh task panicked: {e}"))?
+}
+
+// ─── Phase 14B - app settings IPC ──────────────────────────────────────
+
+/// Return the currently-configured project-memory walker roots.
+///
+/// Reads `app_settings[projectMemoryRoots]`; falls back to the
+/// documented defaults (`["~/Development", "~"]`) when the row is
+/// absent or malformed. Never fails: a corrupt row is treated the same
+/// as a missing one so the Settings view always renders something the
+/// user can edit.
+#[tauri::command]
+pub fn get_project_memory_roots(state: State<'_, Arc<IndexHandle>>) -> Vec<String> {
+    read_project_memory_roots(state.inner().as_ref())
+}
+
+/// Replace the project-memory walker roots. Empty-after-trim entries
+/// are filtered server-side so the UI doesn't need to do that itself.
+/// An empty list is rejected with an error rather than persisted - the
+/// settings reader treats `[]` as "use the defaults", but writing an
+/// empty list would be a confusing UI state, so we surface the error
+/// up.
+///
+/// Persistence is durable: the value lands in `app_settings` and the
+/// next full scan picks it up. The caller should kick a re-scan after
+/// this call returns Ok.
+#[tauri::command]
+pub fn set_project_memory_roots(
+    state: State<'_, Arc<IndexHandle>>,
+    roots: Vec<String>,
+) -> Result<(), String> {
+    set_project_memory_roots_inner(state.inner().as_ref(), roots)
+}
+
+/// Test seam for `set_project_memory_roots`. Trims whitespace, drops
+/// empty entries, refuses to write an empty list (which the reader
+/// would treat as "use defaults" and confuse the user). Persists as a
+/// JSON array of strings under `KEY_PROJECT_MEMORY_ROOTS`.
+pub fn set_project_memory_roots_inner(
+    handle: &IndexHandle,
+    roots: Vec<String>,
+) -> Result<(), String> {
+    let cleaned: Vec<String> = roots
+        .into_iter()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if cleaned.is_empty() {
+        return Err("at least one project memory root is required".to_owned());
+    }
+    let value =
+        serde_json::Value::Array(cleaned.into_iter().map(serde_json::Value::String).collect());
+    write_setting_raw(handle, KEY_PROJECT_MEMORY_ROOTS, &value).map_err(|e| e.to_string())
 }
 
 // ─── Pure functions exercised by tests ──────────────────────────────────
@@ -2214,5 +2270,53 @@ mod tests {
             }
             other => panic!("expected Saved on retry, got {other:?}"),
         }
+    }
+
+    // ─── Phase 14B - app settings IPC ──────────────────────────────────
+
+    #[test]
+    fn set_project_memory_roots_round_trip() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        set_project_memory_roots_inner(&handle, vec!["~/Code".to_owned(), "~/work".to_owned()])
+            .expect("write");
+        let roots = read_project_memory_roots(&handle);
+        assert_eq!(roots, vec!["~/Code".to_owned(), "~/work".to_owned()]);
+    }
+
+    #[test]
+    fn set_project_memory_roots_trims_and_filters_empties() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        set_project_memory_roots_inner(
+            &handle,
+            vec![
+                "  ~/Code  ".to_owned(),
+                String::new(),
+                "   ".to_owned(),
+                "~/work".to_owned(),
+            ],
+        )
+        .expect("write");
+        let roots = read_project_memory_roots(&handle);
+        assert_eq!(roots, vec!["~/Code".to_owned(), "~/work".to_owned()]);
+    }
+
+    #[test]
+    fn set_project_memory_roots_rejects_empty_input() {
+        let handle = IndexHandle::open_in_memory().expect("open");
+        let err = set_project_memory_roots_inner(&handle, vec![]).expect_err("must reject");
+        assert!(
+            err.contains("at least one"),
+            "error should explain the requirement, got: {err}",
+        );
+        let err2 = set_project_memory_roots_inner(&handle, vec![String::new(), "   ".to_owned()])
+            .expect_err("whitespace-only must reject");
+        assert!(
+            err2.contains("at least one"),
+            "error should explain the requirement, got: {err2}",
+        );
+        // Reader still returns documented defaults because nothing was
+        // persisted.
+        let roots = read_project_memory_roots(&handle);
+        assert_eq!(roots, vec!["~/Development".to_owned(), "~".to_owned()]);
     }
 }
