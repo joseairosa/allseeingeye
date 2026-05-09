@@ -5,6 +5,7 @@ export type ViewId =
   | "map"
   | "editor"
   | "health"
+  | "cost"
   | "security"
   | "settings";
 export type Density = "comfortable" | "compact";

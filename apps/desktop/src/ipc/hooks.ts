@@ -21,6 +21,7 @@ import type {
   ComponentFindingsCount,
   ComponentSummary,
   ComponentType,
+  CostResponse,
   DetectedTool,
   FindingSummary,
   HealthSummary,
@@ -47,6 +48,8 @@ import {
   search,
   suppressFinding,
   unsuppressFinding,
+  usageQuery,
+  usageRefresh,
 } from "./index";
 import { subscribeToPipelineEvents } from "./events";
 
@@ -69,6 +72,8 @@ export const QUERY_KEYS = {
   securityFindings: ["securityFindings"] as const,
   securitySummary: ["securitySummary"] as const,
   componentFindingsCounts: ["componentFindingsCounts"] as const,
+  /** Phase 14C - per-`CostQuery` payloads driving the Cost view. */
+  cost: ["cost"] as const,
 } as const;
 
 const STALE_TOOLS_MS = 30_000;
@@ -363,6 +368,114 @@ export function useUnsuppressFinding(): UseMutationResult<
       void qc.invalidateQueries({
         queryKey: QUERY_KEYS.componentFindingsCounts,
       });
+    },
+  });
+}
+
+// ─── Phase 14C - Cost view hooks ──────────────────────────────────────
+
+/** 5 minutes - the user controls refresh timing via the explicit button. */
+const STALE_COST_MS = 5 * 60_000;
+
+/**
+ * Per-`CostQuery` payload narrows. The wire type is a discriminated
+ * union; each hook narrows it to the matching variant so view-side
+ * components don't have to re-discriminate after every fetch.
+ */
+type CostSummaryPayload = Extract<CostResponse, { kind: "summary" }>;
+type CostByProjectPayload = Extract<CostResponse, { kind: "byProject" }>;
+type CostByDayPayload = Extract<CostResponse, { kind: "byDay" }>;
+type CostRecsPayload = Extract<CostResponse, { kind: "recommendations" }>;
+
+async function queryCostSummary(): Promise<CostSummaryPayload> {
+  const res = await usageQuery("summary");
+  if (res.kind !== "summary") {
+    throw new Error(`expected summary, got ${res.kind}`);
+  }
+  return res;
+}
+
+async function queryCostByProject(): Promise<CostByProjectPayload> {
+  const res = await usageQuery("byProject");
+  if (res.kind !== "byProject") {
+    throw new Error(`expected byProject, got ${res.kind}`);
+  }
+  return res;
+}
+
+async function queryCostByDay(): Promise<CostByDayPayload> {
+  const res = await usageQuery("byDay");
+  if (res.kind !== "byDay") {
+    throw new Error(`expected byDay, got ${res.kind}`);
+  }
+  return res;
+}
+
+async function queryCostRecommendations(): Promise<CostRecsPayload> {
+  const res = await usageQuery("recommendations");
+  if (res.kind !== "recommendations") {
+    throw new Error(`expected recommendations, got ${res.kind}`);
+  }
+  return res;
+}
+
+/** Headline KPIs (tokens 30d, $ 30d, top project). */
+export function useCostSummary(): UseQueryResult<CostSummaryPayload, Error> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.cost, "summary"] as const,
+    queryFn: queryCostSummary,
+    staleTime: STALE_COST_MS,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Per-project rollup driving the bar chart. */
+export function useCostByProject(): UseQueryResult<
+  CostByProjectPayload,
+  Error
+> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.cost, "byProject"] as const,
+    queryFn: queryCostByProject,
+    staleTime: STALE_COST_MS,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Per-day rollup driving the sparkline. */
+export function useCostByDay(): UseQueryResult<CostByDayPayload, Error> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.cost, "byDay"] as const,
+    queryFn: queryCostByDay,
+    staleTime: STALE_COST_MS,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Up to 5 ordered recommendations powering the Cost view's right panel. */
+export function useCostRecommendations(): UseQueryResult<
+  CostRecsPayload,
+  Error
+> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.cost, "recommendations"] as const,
+    queryFn: queryCostRecommendations,
+    staleTime: STALE_COST_MS,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * Trigger an aggregation pass on the backend; resolves with the new
+ * `refreshed_at` epoch and invalidates every Cost-related cache so the
+ * view re-renders with the latest rollup.
+ */
+export function useCostRefresh(): UseMutationResult<bigint, Error, void> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => usageRefresh(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.cost });
     },
   });
 }

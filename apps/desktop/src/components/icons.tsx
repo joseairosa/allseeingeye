@@ -126,6 +126,21 @@ export function NavHealthIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/**
+ * Coin/dollar glyph for the Cost sidebar entry (Phase 14C). Outlined to
+ * match the other nav icons; the dollar stroke renders in
+ * `currentColor` so it picks up the active-state accent automatically.
+ */
+export function NavCostIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 6v12" />
+      <path d="M15 9.2a3 3 0 0 0-2.5-1.4h-1a2.2 2.2 0 0 0 0 4.4h1a2.2 2.2 0 0 1 0 4.4h-1A3 3 0 0 1 9 15.2" />
+    </svg>
+  );
+}
+
 export function SaveIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>

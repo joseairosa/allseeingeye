@@ -3,6 +3,7 @@ import { useUi, type ViewId } from "@/store/ui";
 import { useHealthSummary, useSecuritySummary, useTools } from "@/ipc/hooks";
 import type { ComponentType, ToolId } from "@aseye/shared-types";
 import {
+  NavCostIcon,
   NavEditorIcon,
   NavHealthIcon,
   NavInventoryIcon,
@@ -252,6 +253,7 @@ export function Sidebar() {
         <NavButton view="map" label="Map" icon={<NavMapIcon />} />
         <NavButton view="editor" label="Editor" icon={<NavEditorIcon />} />
         <NavButton view="health" label="Health" icon={<NavHealthIcon />} />
+        <NavButton view="cost" label="Cost" icon={<NavCostIcon />} />
       </nav>
 
       <div className="sidebar-scroll">

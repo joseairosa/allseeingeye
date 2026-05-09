@@ -58,6 +58,20 @@ export type { UpdateAvailable } from "../../../apps/desktop/src-tauri/bindings/u
 export type { UpdateChannel } from "../../../apps/desktop/src-tauri/bindings/updates/UpdateChannel";
 export type { UpdateError } from "../../../apps/desktop/src-tauri/bindings/updates/UpdateError";
 
+// Phase 14C: token usage / cost view wire types. The frontend Cost view
+// consumes `usage_query` and `usage_refresh`; every payload type lives
+// under `bindings/usage/`.
+export type { CostQuery } from "../../../apps/desktop/src-tauri/bindings/usage/CostQuery";
+export type { CostResponse } from "../../../apps/desktop/src-tauri/bindings/usage/CostResponse";
+export type { SummaryResponse } from "../../../apps/desktop/src-tauri/bindings/usage/SummaryResponse";
+export type { ByProjectRow } from "../../../apps/desktop/src-tauri/bindings/usage/ByProjectRow";
+export type { ByDayRow } from "../../../apps/desktop/src-tauri/bindings/usage/ByDayRow";
+export type { CostRec } from "../../../apps/desktop/src-tauri/bindings/usage/CostRec";
+export type { CostRecKind } from "../../../apps/desktop/src-tauri/bindings/usage/CostRecKind";
+export type { TokenTotals } from "../../../apps/desktop/src-tauri/bindings/usage/TokenTotals";
+export type { PriceLookup } from "../../../apps/desktop/src-tauri/bindings/usage/PriceLookup";
+export type { ToolKind as UsageToolKind } from "../../../apps/desktop/src-tauri/bindings/usage/UsageToolKind";
+
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";
 

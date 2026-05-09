@@ -25,6 +25,8 @@ import type {
   ComponentFindingsCount,
   ComponentSummary,
   ComponentType,
+  CostQuery,
+  CostResponse,
   DetectedTool,
   FindingSummary,
   HealthSummary,
@@ -45,6 +47,8 @@ export type {
   ComponentFindingsCount,
   ComponentSummary,
   ComponentType,
+  CostQuery,
+  CostResponse,
   DetectedTool,
   FindingSummary,
   HealthSummary,
@@ -196,4 +200,34 @@ export async function getValidationSchema(
   kind: ComponentType,
 ): Promise<string | null> {
   return invoke<string | null>("get_validation_schema", { tool, kind });
+}
+
+// ─── Phase 14C - Cost / token usage ───────────────────────────────────
+
+/**
+ * Run a typed query against the `token_usage` rollup table. `kind`
+ * picks the response shape (summary, byProject, byDay, recommendations).
+ * Pass `refresh = true` to force a re-aggregation pass before reading.
+ */
+export async function usageQuery(
+  kind: CostQuery,
+  refresh?: boolean,
+): Promise<CostResponse> {
+  return invoke<CostResponse>("usage_query", {
+    kind,
+    refresh: refresh ?? null,
+  });
+}
+
+/**
+ * Imperatively re-run the aggregation pass and return the new
+ * `refreshed_at` epoch (unix seconds). The Cost view calls this when
+ * the user clicks "refresh".
+ */
+export async function usageRefresh(): Promise<bigint> {
+  // The Rust handler returns `i64`; the Tauri JSON bridge surfaces it
+  // as `number`. We coerce to `bigint` so the rest of the UI uses a
+  // single timestamp type with `formatRelativeTime`.
+  const raw = await invoke<number | bigint>("usage_refresh");
+  return typeof raw === "bigint" ? raw : BigInt(raw);
 }
