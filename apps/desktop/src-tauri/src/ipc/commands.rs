@@ -1539,6 +1539,52 @@ fn sanitize_fts_query(text: &str) -> String {
     parts.join(" ")
 }
 
+// ─── Phase 15 - Backup IPC ──────────────────────────────────────────
+
+/// Run a manual `Backup now` sweep across every indexed component.
+/// Returns a [`BackupReport`] enumerating per-component outcomes.
+#[tauri::command]
+pub async fn backup_now(
+    state: State<'_, Arc<IndexHandle>>,
+) -> Result<crate::backup::BackupReport, String> {
+    let handle = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || crate::backup::backup_now(handle, None))
+        .await
+        .map_err(|e| format!("backup task join failed: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+/// Run a `Restore now` sweep. When `dry_run` is true, the function
+/// reports what would happen but writes nothing to disk.
+#[tauri::command]
+pub async fn restore_now(
+    state: State<'_, Arc<IndexHandle>>,
+    dry_run: bool,
+) -> Result<crate::backup::RestoreReport, String> {
+    let handle = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || crate::backup::restore_now(handle, dry_run))
+        .await
+        .map_err(|e| format!("restore task join failed: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+/// Read the current backup status (key presence, manifest count,
+/// last-backup timestamp, auto-backup toggle, storage root).
+#[tauri::command]
+pub fn backup_status(
+    state: State<'_, Arc<IndexHandle>>,
+) -> Result<crate::backup::BackupStatusReport, String> {
+    crate::backup::backup_status(Arc::clone(state.inner())).map_err(|e| e.to_string())
+}
+
+/// Toggle the auto-backup-on-edit feature. Persists to
+/// `app_settings.backupAutoEnabled`.
+#[tauri::command]
+pub fn backup_set_auto(state: State<'_, Arc<IndexHandle>>, enabled: bool) -> Result<(), String> {
+    crate::index::settings::write_backup_auto_enabled(state.inner().as_ref(), enabled)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

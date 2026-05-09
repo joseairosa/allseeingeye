@@ -5,6 +5,7 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+mod backup;
 mod fs;
 mod index;
 mod ipc;
@@ -101,6 +102,18 @@ pub use ipc::updates::{
 // drive the aggregator end-to-end without standing up a Tauri app.
 pub use usage::{refresh_from_home as usage_refresh_from_home, RefreshOutcome};
 
+// Phase 15: re-export the backup public surface. The integration
+// test in `tests/backup_real_home_proof.rs` consumes the orchestrator
+// directly to exercise the encrypt-then-restore round-trip against
+// the developer's real index, so the surface needs to be reachable
+// from outside the crate.
+pub use backup::{
+    backup_now as backup_now_inner, backup_status as backup_status_inner,
+    ensure_keypair as ensure_backup_keypair, restore_now as restore_now_inner, BackupErrorEntry,
+    BackupErrorKind, BackupReport, BackupStatusReport, DevicePublicKey, LocalDirectoryStorage,
+    RestoreErrorEntry, RestoreErrorKind, RestoreReport,
+};
+
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -146,6 +159,19 @@ pub fn run() {
             // Bridge pipeline events to Tauri events. The bridge runs
             // until the pipeline's broadcaster is dropped.
             ipc::spawn_event_bridge(app.handle().clone(), events_rx);
+
+            // Phase 15 - ensure the device backup keypair exists at
+            // boot so the first manual `Backup now` button click
+            // does not pay the keypair-generation cost. Failure is
+            // non-fatal: the orchestrator can also create the
+            // keypair on demand. The auto-backup debouncer is wired
+            // in a separate commit.
+            if let Err(err) = backup::ensure_keypair(index.as_ref()) {
+                tracing::warn!(
+                    ?err,
+                    "ensure_backup_keypair failed at boot; backup is disabled until the keychain works",
+                );
+            }
 
             // Tauri owns these; cloning the Arc keeps the pipeline
             // alive even though the `Pipeline` itself is not exposed
@@ -226,6 +252,11 @@ pub fn run() {
             ipc::commands::export_diagnostics,
             ipc::commands::get_excluded_tool_ids,
             ipc::commands::set_tool_indexed,
+            // Phase 15 - end-to-end encrypted local backup.
+            ipc::commands::backup_now,
+            ipc::commands::restore_now,
+            ipc::commands::backup_status,
+            ipc::commands::backup_set_auto,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
