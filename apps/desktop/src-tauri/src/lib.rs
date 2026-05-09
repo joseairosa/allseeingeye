@@ -160,18 +160,30 @@ pub fn run() {
             // until the pipeline's broadcaster is dropped.
             ipc::spawn_event_bridge(app.handle().clone(), events_rx);
 
-            // Phase 15 - ensure the device backup keypair exists at
-            // boot so the first manual `Backup now` button click
-            // does not pay the keypair-generation cost. Failure is
-            // non-fatal: the orchestrator can also create the
-            // keypair on demand. The auto-backup debouncer is wired
-            // in a separate commit.
+            // Phase 15 - spawn the auto-backup debouncer. It listens
+            // on its own subscription of the pipeline event channel
+            // and runs an encrypted backup sweep 5 seconds after the
+            // last `componentUpserted` event. The debouncer honours
+            // `backupAutoEnabled` (default true) on every flush, so
+            // toggling the setting at runtime is picked up without a
+            // process restart. Best-effort: failures inside the
+            // sweep are logged via `tracing::warn!` and never
+            // propagate out of the task.
+            //
+            // We also call `ensure_keypair` once at boot so the
+            // device public key is cached in `app_settings` before
+            // the first auto-backup tick. Failure here is non-fatal:
+            // the auto-debouncer will retry on the next event, and
+            // the "Backup now" button surfaces a clearer error if
+            // the keychain is genuinely unavailable.
             if let Err(err) = backup::ensure_keypair(index.as_ref()) {
                 tracing::warn!(
                     ?err,
                     "ensure_backup_keypair failed at boot; backup is disabled until the keychain works",
                 );
             }
+            let auto_rx = pipeline.subscribe_events();
+            backup::auto::spawn_auto_backup_task(Arc::clone(&index), auto_rx);
 
             // Tauri owns these; cloning the Arc keeps the pipeline
             // alive even though the `Pipeline` itself is not exposed
