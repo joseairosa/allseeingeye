@@ -321,6 +321,7 @@ export function CommandPalette({ defaultQuery = "" }: CommandPaletteProps = {}) 
     tag: null,
     limit: RECENT_LIMIT * 4, // over-fetch then sort by lastUsedAt
     offset: null,
+    modifiedAfterUnix: null,
   });
 
   const componentRows: ComponentRow[] = useMemo(() => {

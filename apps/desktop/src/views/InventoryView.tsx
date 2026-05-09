@@ -66,6 +66,7 @@ const FILTER_CHIPS = [
   { id: "tool:claude-code", label: "Claude Code" },
   { id: "type:skill", label: "Skill" },
   { id: "scope:user", label: "User" },
+  { id: "last:7d", label: "Recently modified" },
 ] as const;
 
 /**
@@ -257,11 +258,18 @@ function chipStates(
   filterToolId: ToolId | null,
   filterKind: ComponentType | null,
   filterScope: Scope | null,
+  modifiedAfterUnix: bigint | null,
 ): Record<string, ChipState> {
   return {
     "tool:claude-code": { active: filterToolId === "claude-code" },
     "type:skill": { active: filterKind === "skill" },
     "scope:user": { active: filterScope === "user" },
+    // `last:7d` is active whenever the parser produced a non-null
+    // cutoff. We do not check the exact value: the chip toggles a
+    // 7-day cutoff but the user can also type `last:14d` and the chip
+    // still reads as "you have a date filter on" which is the right
+    // signal.
+    "last:7d": { active: modifiedAfterUnix !== null },
   };
 }
 
@@ -483,6 +491,7 @@ export function InventoryView() {
     parsed.filter.toolId,
     parsed.filter.kind,
     parsed.filter.scope,
+    parsed.filter.modifiedAfterUnix,
   );
 
   const rowHeight =

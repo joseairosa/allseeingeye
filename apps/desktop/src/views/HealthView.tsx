@@ -35,6 +35,7 @@ const MCP_FILTER: ComponentFilter = {
   tag: null,
   limit: 100,
   offset: 0,
+  modifiedAfterUnix: null,
 };
 
 /**
@@ -50,6 +51,7 @@ const MEMORY_FILTER: ComponentFilter = {
   tag: null,
   limit: 500,
   offset: 0,
+  modifiedAfterUnix: null,
 };
 
 /**

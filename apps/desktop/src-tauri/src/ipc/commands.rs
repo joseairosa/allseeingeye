@@ -556,6 +556,10 @@ pub fn list_components_inner(
         sql.push_str(" AND t.tag = ?");
         params_vec.push(Box::new(tag.clone()));
     }
+    if let Some(cutoff) = filter.modified_after_unix {
+        sql.push_str(" AND c.mtime >= ?");
+        params_vec.push(Box::new(cutoff));
+    }
 
     sql.push_str(" ORDER BY c.mtime DESC LIMIT ? OFFSET ?");
     params_vec.push(Box::new(i64::from(limit)));
@@ -1573,6 +1577,54 @@ mod tests {
             .find(|r| r.component_type == ComponentType::Settings)
             .expect("settings root");
         upsert_component(handle, &descriptor, root, &path, "config").expect("upsert");
+    }
+
+    #[test]
+    fn list_components_modified_after_unix_filter() {
+        // Audit issue #8: `last:Nd` chip plumbs through to a backend
+        // mtime cutoff. Seed two skills and force one to an old mtime,
+        // then prove the filter excludes it.
+        let home = tempdir().expect("tempdir");
+        let handle = IndexHandle::open_in_memory().expect("open");
+        seed_skill(&handle, home.path(), "fresh-skill", "body\n");
+        seed_skill(&handle, home.path(), "stale-skill", "body\n");
+
+        // Force `stale-skill` to a mtime well in the past.
+        let now_unix = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .expect("clock fits in i64");
+        let ten_days_ago = now_unix - 10 * 86_400;
+        handle
+            .write(|conn| {
+                conn.execute(
+                    "UPDATE component SET mtime = ?1 WHERE name = 'stale-skill'",
+                    rusqlite::params![ten_days_ago],
+                )?;
+                Ok(())
+            })
+            .expect("update mtime");
+
+        // Cutoff = 7 days ago; only fresh-skill survives.
+        let seven_days_ago = now_unix - 7 * 86_400;
+        let recent = list_components_inner(
+            &handle,
+            &ComponentFilter {
+                modified_after_unix: Some(seven_days_ago),
+                ..ComponentFilter::default()
+            },
+        )
+        .expect("list recent");
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].name, "fresh-skill");
+
+        // Without the cutoff both are visible.
+        let everything =
+            list_components_inner(&handle, &ComponentFilter::default()).expect("list all");
+        assert_eq!(everything.len(), 2);
     }
 
     #[test]

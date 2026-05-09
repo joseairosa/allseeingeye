@@ -27,4 +27,12 @@ limit: number | null,
 /**
  * Offset into the result set (default 0).
  */
-offset: number | null, };
+offset: number | null, 
+/**
+ * Audit issue #8: lower-bound `mtime` cutoff (unix seconds). When
+ * set, only rows whose `mtime >= modified_after_unix` are
+ * returned. Drives the inventory `last:Nd` / `last:Nh` / `last:Nw`
+ * filter chip; the parser converts `Nd`/`Nh`/`Nw` into the
+ * concrete cutoff before this hits the wire.
+ */
+modifiedAfterUnix: bigint | null, };

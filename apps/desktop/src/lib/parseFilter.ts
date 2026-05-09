@@ -66,6 +66,37 @@ export interface ParsedSearch {
 }
 
 /**
+ * Audit issue #8: convert a `last:` value like `7d`, `48h`, `2w` into
+ * a unix-seconds cutoff. Returns `null` for malformed values so the
+ * caller can drop the token to free-text rather than guess.
+ *
+ * Accepted units: `s` seconds, `m` minutes, `h` hours, `d` days,
+ * `w` weeks. The integer must be positive. `last:0d` falls through to
+ * free-text because "modified after now" is never what the user meant.
+ *
+ * The function takes `nowSec` so tests can pin a deterministic clock.
+ */
+export function parseLastValue(value: string, nowSec: number): number | null {
+  const match = /^(\d+)(s|m|h|d|w)$/i.exec(value.trim());
+  if (!match) return null;
+  const nRaw = match[1];
+  const unit = match[2];
+  if (!nRaw || !unit) return null;
+  const n = Number.parseInt(nRaw, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const SECONDS_BY_UNIT: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 3600,
+    d: 86_400,
+    w: 7 * 86_400,
+  };
+  const factor = SECONDS_BY_UNIT[unit.toLowerCase()];
+  if (factor === undefined) return null;
+  return nowSec - n * factor;
+}
+
+/**
  * Parse a raw search box value into a structured filter + leftover
  * free-text. Unknown values for known prefixes (e.g. `type:bogus`) fall
  * through to free-text rather than producing an error - the user sees
@@ -76,7 +107,10 @@ export interface ParsedSearch {
  * round-trips even when the user types loose syntax. Multiple spaces
  * are collapsed.
  */
-export function parseSearchQuery(input: string): ParsedSearch {
+export function parseSearchQuery(
+  input: string,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): ParsedSearch {
   const filter: ComponentFilter = {
     toolId: null,
     kind: null,
@@ -85,6 +119,7 @@ export function parseSearchQuery(input: string): ParsedSearch {
     tag: null,
     limit: null,
     offset: null,
+    modifiedAfterUnix: null,
   };
   const freeTokens: string[] = [];
 
@@ -131,6 +166,24 @@ export function parseSearchQuery(input: string): ParsedSearch {
       case "tag":
         filter.tag = value;
         break;
+      case "last": {
+        // Audit issue #8: recognise `last:7d`, `last:48h`, `last:2w` etc.
+        // Convert to a unix-second cutoff that the backend SQL applies
+        // as `c.mtime >= cutoff`. Malformed values (e.g. `last:7days`,
+        // `last:0d`) fall through to free-text so the user sees no
+        // results and self-corrects rather than getting a silently
+        // misapplied filter.
+        // ts-rs emits Rust's `i64` as `bigint` in the TS binding so
+        // the filter field is `bigint | null`; we coerce here to keep
+        // the helper API simple.
+        const cutoff = parseLastValue(value, nowSec);
+        if (cutoff === null) {
+          freeTokens.push(token);
+        } else {
+          filter.modifiedAfterUnix = BigInt(cutoff);
+        }
+        break;
+      }
       default:
         freeTokens.push(token);
     }

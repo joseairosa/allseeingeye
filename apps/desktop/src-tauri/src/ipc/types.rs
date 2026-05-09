@@ -78,6 +78,12 @@ pub struct ComponentFilter {
     pub limit: Option<u32>,
     /// Offset into the result set (default 0).
     pub offset: Option<u32>,
+    /// Audit issue #8: lower-bound `mtime` cutoff (unix seconds). When
+    /// set, only rows whose `mtime >= modified_after_unix` are
+    /// returned. Drives the inventory `last:Nd` / `last:Nh` / `last:Nw`
+    /// filter chip; the parser converts `Nd`/`Nh`/`Nw` into the
+    /// concrete cutoff before this hits the wire.
+    pub modified_after_unix: Option<i64>,
 }
 
 /// One entry in a `list_components` result.
