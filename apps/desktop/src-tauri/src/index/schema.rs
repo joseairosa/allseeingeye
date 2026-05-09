@@ -272,3 +272,35 @@ CREATE TABLE usage_session_watermark (
   PRIMARY KEY (tool, session_id)
 );
 ";
+
+// Phase 15: end-to-end encrypted local backup manifest. One row per
+// component_id maps to the encrypted blob written to the configured
+// `BackupStorage` (default `~/.aseye-backup/blobs/`). The plaintext +
+// blob hashes drive the idempotency check on `backup_now`: if the
+// component file's SHA-256 still matches `plaintext_hash`, the
+// orchestrator skips the re-encrypt. `ON DELETE CASCADE` keeps the
+// manifest tied to the component - delete a component, its manifest
+// row vanishes and the matching blob becomes garbage to be GC'd later.
+//
+// See `docs/15-backup-and-restore.md` section 15.4 ("SQLite manifest
+// table") for the full schema rationale.
+
+/// Backup manifest table - one row per backed-up component.
+pub const CREATE_BACKUP_MANIFEST: &str = "
+CREATE TABLE backup_manifest (
+  component_id    TEXT PRIMARY KEY,
+  blob_path       TEXT NOT NULL,
+  plaintext_hash  TEXT NOT NULL,
+  blob_hash       TEXT NOT NULL,
+  plaintext_size  INTEGER NOT NULL,
+  blob_size       INTEGER NOT NULL,
+  encrypted_at    INTEGER NOT NULL,
+  FOREIGN KEY (component_id) REFERENCES component(id) ON DELETE CASCADE
+);
+";
+
+/// Index covering "what got backed up most recently" - powers the
+/// `last_backup_at` aggregate that `backup_status` returns and the
+/// "X minutes ago" line in Settings.
+pub const CREATE_IDX_BACKUP_MANIFEST_ENCRYPTED_AT: &str =
+    "CREATE INDEX idx_backup_manifest_encrypted_at ON backup_manifest(encrypted_at);";

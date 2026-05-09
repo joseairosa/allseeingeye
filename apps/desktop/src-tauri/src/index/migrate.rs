@@ -78,6 +78,15 @@ const V5_TOKEN_USAGE: &[&str] = &[
     schema::CREATE_USAGE_SESSION_WATERMARK,
 ];
 
+/// Phase 15 migration: add the `backup_manifest` table + its
+/// `encrypted_at` index. New table only, no changes to existing rows.
+/// See `docs/15-backup-and-restore.md` section 15.4 for the schema
+/// rationale.
+const V6_BACKUP_MANIFEST: &[&str] = &[
+    schema::CREATE_BACKUP_MANIFEST,
+    schema::CREATE_IDX_BACKUP_MANIFEST_ENCRYPTED_AT,
+];
+
 /// Registered migrations. Keep sorted ascending by version. The runner
 /// refuses to open a DB whose stored version is higher than the maximum
 /// here - that means a future build wrote it.
@@ -87,6 +96,7 @@ const MIGRATIONS: &[(u32, &[&str])] = &[
     (3, V3_FINDING_EVIDENCE),
     (4, V4_APP_SETTINGS),
     (5, V5_TOKEN_USAGE),
+    (6, V6_BACKUP_MANIFEST),
 ];
 
 /// Highest migration version known to this build.
@@ -200,6 +210,7 @@ mod tests {
             "app_settings",
             "token_usage",
             "usage_session_watermark",
+            "backup_manifest",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -211,7 +222,7 @@ mod tests {
             assert!(n >= 1, "expected table {table} to exist");
         }
 
-        // Indexes from v1 + v2 + v5.
+        // Indexes from v1 + v2 + v5 + v6.
         for idx in [
             "idx_component_tool_type",
             "idx_component_mtime",
@@ -220,6 +231,7 @@ mod tests {
             "idx_finding_severity_detected",
             "idx_token_usage_day",
             "idx_token_usage_project",
+            "idx_backup_manifest_encrypted_at",
         ] {
             let n: i64 = conn
                 .query_row(
@@ -372,6 +384,112 @@ mod tests {
         assert_eq!(evidence.2, 0, "evidence_json must be nullable");
     }
 
+    /// Phase 15: a fresh DB at `latest_version` carries the
+    /// `backup_manifest` table + its `encrypted_at` index, with the
+    /// columns exactly as `docs/15-backup-and-restore.md` section 15.4
+    /// pins them.
+    #[test]
+    fn migration_v6_creates_backup_manifest() {
+        let mut conn = fresh_in_memory();
+        let v = run_migrations(&mut conn).expect("migrate");
+        assert!(
+            v >= 6,
+            "expected migrations to advance past v6, got {v} (latest = {})",
+            latest_version(),
+        );
+
+        let mut stmt = conn.prepare("PRAGMA table_info(backup_manifest)").unwrap();
+        let cols: Vec<(String, String, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?, // name
+                    row.get::<_, String>(2)?, // type
+                    row.get::<_, i64>(3)?,    // notnull (0 = nullable)
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        // Spot-check shape: types correct, every column NOT NULL.
+        // SQLite reports `notnull = 0` for the primary-key column when
+        // the table is declared with `PRIMARY KEY` but no explicit
+        // `NOT NULL` annotation (the engine treats PK columns as
+        // implicitly NOT NULL but the PRAGMA does NOT reflect that).
+        // We accept either 0 or 1 for `component_id` because the PK
+        // constraint already enforces non-null at insert time.
+        for (name, ty, notnull) in [
+            ("component_id", "TEXT", None),
+            ("blob_path", "TEXT", Some(1)),
+            ("plaintext_hash", "TEXT", Some(1)),
+            ("blob_hash", "TEXT", Some(1)),
+            ("plaintext_size", "INTEGER", Some(1)),
+            ("blob_size", "INTEGER", Some(1)),
+            ("encrypted_at", "INTEGER", Some(1)),
+        ] {
+            let found = cols
+                .iter()
+                .find(|(n, _, _)| n == name)
+                .unwrap_or_else(|| panic!("expected column {name}"));
+            assert_eq!(found.1, ty, "type mismatch for {name}");
+            if let Some(want) = notnull {
+                assert_eq!(found.2, want, "notnull mismatch for {name}");
+            }
+        }
+    }
+
+    /// Sanity-check the upgrade path: a DB stamped at v5 advances to
+    /// v6 without rewriting v5 rows. Mirror of the existing v2 -> v3
+    /// upgrade-path test.
+    #[test]
+    fn migration_v5_to_v6_upgrade_path() {
+        let mut conn = fresh_in_memory();
+        // Run all migrations once to lay every table down.
+        let _ = run_migrations(&mut conn).expect("initial migrate");
+        // Now simulate a DB pinned at v5 by deleting the v6 table +
+        // index and rewinding `schema_version`.
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_backup_manifest_encrypted_at;
+             DROP TABLE IF EXISTS backup_manifest;
+             DELETE FROM schema_version;
+             INSERT INTO schema_version (version) VALUES (5);",
+        )
+        .unwrap();
+
+        // Confirm the simulated v5 state has no backup_manifest.
+        let pre: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'backup_manifest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pre, 0, "simulated v5 must have no backup_manifest");
+
+        // Upgrade. The migration runner must apply v6 only.
+        let v = run_migrations(&mut conn).expect("upgrade");
+        assert_eq!(v, latest_version());
+
+        // backup_manifest exists post-upgrade.
+        let post: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'backup_manifest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(post, 1, "v6 upgrade must create backup_manifest");
+
+        // The encrypted_at index lands too.
+        let idx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_backup_manifest_encrypted_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx, 1);
+    }
+
     #[test]
     fn migration_v2_to_v3_upgrade_path() {
         // Sanity-check the upgrade path: an existing DB at v2
@@ -402,7 +520,9 @@ mod tests {
              ALTER TABLE security_finding_old RENAME TO security_finding;
              DROP TABLE IF EXISTS app_settings;
              DROP TABLE IF EXISTS token_usage;
-             DROP TABLE IF EXISTS usage_session_watermark;",
+             DROP TABLE IF EXISTS usage_session_watermark;
+             DROP INDEX IF EXISTS idx_backup_manifest_encrypted_at;
+             DROP TABLE IF EXISTS backup_manifest;",
         )
         .unwrap();
 
