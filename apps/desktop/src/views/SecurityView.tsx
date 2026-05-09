@@ -19,6 +19,7 @@ import {
   useSecurityFindings,
   useSecuritySummary,
   useSuppressFinding,
+  useUnsuppressFinding,
 } from "@/ipc/hooks";
 import { RedactedPreview } from "@/components/RedactedPreview";
 import { ShieldCheckIcon, ShieldIcon } from "@/components/icons";
@@ -106,6 +107,7 @@ interface FindingRowProps {
   selected: boolean;
   onToggleSelect: (id: string) => void;
   onSuppress: (componentId: string, pattern: string) => void;
+  onUnsuppress: (componentId: string, pattern: string) => void;
   onJumpToComponent: (componentId: string) => void;
 }
 
@@ -114,6 +116,7 @@ const FindingRow = memo(function FindingRow({
   selected,
   onToggleSelect,
   onSuppress,
+  onUnsuppress,
   onJumpToComponent,
 }: FindingRowProps) {
   const categoryLabel =
@@ -158,7 +161,15 @@ const FindingRow = memo(function FindingRow({
         >
           view component
         </button>
-        {!finding.suppressed ? (
+        {finding.suppressed ? (
+          <button
+            type="button"
+            className="text-button quiet"
+            onClick={() => onUnsuppress(finding.componentId, finding.pattern)}
+          >
+            unsuppress
+          </button>
+        ) : (
           <button
             type="button"
             className="text-button quiet"
@@ -166,7 +177,7 @@ const FindingRow = memo(function FindingRow({
           >
             suppress
           </button>
-        ) : null}
+        )}
       </div>
     </div>
   );
@@ -192,6 +203,7 @@ interface FindingGroupProps {
   selectedIds: ReadonlySet<string>;
   onToggleSelect: (id: string) => void;
   onSuppress: (componentId: string, pattern: string) => void;
+  onUnsuppress: (componentId: string, pattern: string) => void;
   onJumpToComponent: (componentId: string) => void;
 }
 
@@ -201,6 +213,7 @@ function FindingGroup({
   selectedIds,
   onToggleSelect,
   onSuppress,
+  onUnsuppress,
   onJumpToComponent,
 }: FindingGroupProps) {
   if (findings.length === 0) return null;
@@ -220,6 +233,7 @@ function FindingGroup({
           selected={selectedIds.has(finding.id)}
           onToggleSelect={onToggleSelect}
           onSuppress={onSuppress}
+          onUnsuppress={onUnsuppress}
           onJumpToComponent={onJumpToComponent}
         />
       ))}
@@ -253,6 +267,7 @@ export function SecurityView() {
   const { data, isPending, isError } = useSecurityFindings(filter);
   const { data: summary } = useSecuritySummary();
   const suppressMut = useSuppressFinding();
+  const unsuppressMut = useUnsuppressFinding();
 
   // Memoise the dataset so a stable reference flows into `grouped`.
   // Without this, the `data ?? []` fallback creates a fresh array on
@@ -286,10 +301,25 @@ export function SecurityView() {
     suppressMut.mutate({ componentId, pattern });
   }
 
+  function handleUnsuppress(componentId: string, pattern: string): void {
+    unsuppressMut.mutate({ componentId, pattern });
+  }
+
   function handleBulkSuppress(): void {
     const targets = findings.filter((f) => selectedIds.has(f.id));
     for (const t of targets) {
       suppressMut.mutate({ componentId: t.componentId, pattern: t.pattern });
+    }
+    clearSelection();
+  }
+
+  // Bulk-unsuppress branch for when the user is filtering to suppressed
+  // findings and wants to return many at once. Mirrors `handleBulkSuppress`
+  // shape so the keyboard / accessibility behaviour stays identical.
+  function handleBulkUnsuppress(): void {
+    const targets = findings.filter((f) => selectedIds.has(f.id));
+    for (const t of targets) {
+      unsuppressMut.mutate({ componentId: t.componentId, pattern: t.pattern });
     }
     clearSelection();
   }
@@ -309,14 +339,25 @@ export function SecurityView() {
       <div className="view-toolbar">
         <h2 id="security-heading">Security</h2>
         {selectedIds.size > 0 ? (
-          <button
-            type="button"
-            className="primary-button"
-            onClick={handleBulkSuppress}
-            disabled={suppressMut.isPending}
-          >
-            suppress {selectedIds.size} selected
-          </button>
+          bucket === "suppressed" ? (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleBulkUnsuppress}
+              disabled={unsuppressMut.isPending}
+            >
+              unsuppress {selectedIds.size} selected
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleBulkSuppress}
+              disabled={suppressMut.isPending}
+            >
+              suppress {selectedIds.size} selected
+            </button>
+          )
         ) : null}
       </div>
 
@@ -363,6 +404,7 @@ export function SecurityView() {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               onSuppress={handleSuppress}
+              onUnsuppress={handleUnsuppress}
               onJumpToComponent={handleJumpToComponent}
             />
           ))
