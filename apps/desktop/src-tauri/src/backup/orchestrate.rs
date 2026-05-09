@@ -100,6 +100,25 @@ pub fn backup_now(
     backup_now_with(handle, &storage, &SystemKeychain, target_ids)
 }
 
+/// Per-stage timing accumulator for the backup pass. All fields are
+/// nanosecond totals across the sweep, populated by `backup_component`
+/// and emitted at the end of `backup_now_with` when the env var
+/// `ASEYE_BACKUP_TIMING=1` is set. Production runs stay quiet.
+///
+/// Used to disprove the original perf concern in issue #24 (debug
+/// build was misleading; release mode is 6s for 88 files).
+#[derive(Default)]
+#[allow(clippy::struct_field_names)]
+struct StageTimings {
+    read_ns: u128,
+    hash_pt_ns: u128,
+    read_manifest_ns: u128,
+    encrypt_ns: u128,
+    hash_blob_ns: u128,
+    storage_put_ns: u128,
+    upsert_manifest_ns: u128,
+}
+
 /// Test seam - same as [`backup_now`] but takes injectable
 /// dependencies so unit tests can use a tempdir-backed storage and
 /// an in-memory keychain.
@@ -119,9 +138,18 @@ pub fn backup_now_with<S: BackupStorage, K: Keychain>(
     let mut encrypted = 0u32;
     let mut skipped_unchanged = 0u32;
     let mut errors: Vec<BackupErrorEntry> = Vec::new();
+    let mut timings = StageTimings::default();
+    let timing_enabled = std::env::var("ASEYE_BACKUP_TIMING").is_ok();
 
     for (component_id, path) in candidates {
-        match backup_component(handle.as_ref(), storage, &device_pub, &component_id, &path) {
+        match backup_component(
+            handle.as_ref(),
+            storage,
+            &device_pub,
+            &component_id,
+            &path,
+            &mut timings,
+        ) {
             Ok(BackupOutcome::Encrypted) => {
                 encrypted = encrypted.saturating_add(1);
             }
@@ -133,6 +161,22 @@ pub fn backup_now_with<S: BackupStorage, K: Keychain>(
                 errors.push(err);
             }
         }
+    }
+
+    if timing_enabled {
+        eprintln!(
+            "[backup-perf] total={}ms encrypted={} skipped={} read={}ms hash_pt={}ms read_manifest={}ms encrypt={}ms hash_blob={}ms storage_put={}ms upsert_manifest={}ms",
+            started.elapsed().as_millis(),
+            encrypted,
+            skipped_unchanged,
+            timings.read_ns / 1_000_000,
+            timings.hash_pt_ns / 1_000_000,
+            timings.read_manifest_ns / 1_000_000,
+            timings.encrypt_ns / 1_000_000,
+            timings.hash_blob_ns / 1_000_000,
+            timings.storage_put_ns / 1_000_000,
+            timings.upsert_manifest_ns / 1_000_000,
+        );
     }
 
     // Stamp the last-run watermark even when zero components were
@@ -274,35 +318,51 @@ fn backup_component<S: BackupStorage>(
     device_pub: &DevicePublicKey,
     component_id: &str,
     path: &Path,
+    timings: &mut StageTimings,
 ) -> Result<BackupOutcome, BackupErrorEntry> {
+    let t = Instant::now();
     let bytes = std::fs::read(path).map_err(|e| BackupErrorEntry {
         component_id: component_id.into(),
         kind: BackupErrorKind::Read,
         message: format!("read {}: {}", path.display(), e),
     })?;
+    timings.read_ns = timings.read_ns.saturating_add(t.elapsed().as_nanos());
+
+    let t = Instant::now();
     let plaintext_hash = sha256_hex(&bytes);
+    timings.hash_pt_ns = timings.hash_pt_ns.saturating_add(t.elapsed().as_nanos());
 
     // Idempotency check: if the manifest already has this exact
     // plaintext, skip the encrypt + write.
+    let t = Instant::now();
     let existing = read_manifest_entry(handle, component_id).map_err(|e| BackupErrorEntry {
         component_id: component_id.into(),
         kind: BackupErrorKind::Manifest,
         message: format!("manifest read: {e}"),
     })?;
+    timings.read_manifest_ns = timings
+        .read_manifest_ns
+        .saturating_add(t.elapsed().as_nanos());
     if let Some(entry) = &existing {
         if entry.plaintext_hash == plaintext_hash {
             return Ok(BackupOutcome::SkippedUnchanged);
         }
     }
 
+    let t = Instant::now();
     let blob = encrypt_blob(device_pub, &bytes).map_err(|e| BackupErrorEntry {
         component_id: component_id.into(),
         kind: BackupErrorKind::Encrypt,
         message: format!("encrypt: {e}"),
     })?;
+    timings.encrypt_ns = timings.encrypt_ns.saturating_add(t.elapsed().as_nanos());
+
+    let t = Instant::now();
     let blob_hash = sha256_hex(&blob);
+    timings.hash_blob_ns = timings.hash_blob_ns.saturating_add(t.elapsed().as_nanos());
     let blob_path = blob_path_for_hash(&blob_hash);
 
+    let t = Instant::now();
     storage
         .put_blob(&blob_path, &blob)
         .map_err(|e| BackupErrorEntry {
@@ -310,6 +370,9 @@ fn backup_component<S: BackupStorage>(
             kind: BackupErrorKind::Write,
             message: format!("storage put: {e}"),
         })?;
+    timings.storage_put_ns = timings
+        .storage_put_ns
+        .saturating_add(t.elapsed().as_nanos());
 
     let entry = BackupManifestEntry {
         component_id: component_id.into(),
@@ -320,11 +383,15 @@ fn backup_component<S: BackupStorage>(
         blob_size: blob.len() as u64,
         encrypted_at: unix_now_secs(),
     };
+    let t = Instant::now();
     upsert_manifest_entry(handle, &entry).map_err(|e| BackupErrorEntry {
         component_id: component_id.into(),
         kind: BackupErrorKind::Manifest,
         message: format!("manifest upsert: {e}"),
     })?;
+    timings.upsert_manifest_ns = timings
+        .upsert_manifest_ns
+        .saturating_add(t.elapsed().as_nanos());
 
     // Best-effort retire of the previous blob. Failure is logged but
     // does not abort the backup - the new entry is already durable.
