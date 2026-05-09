@@ -14,7 +14,7 @@
  * The view consumes IPC via the existing TanStack Query hooks; the
  * pipeline-event invalidator in `App.tsx` keeps these queries fresh.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useUi } from "@/store/ui";
 import { useComponents, useHealthSummary } from "@/ipc/hooks";
 import { formatRelativeTime } from "@/lib/relativeTime";
@@ -97,11 +97,25 @@ function McpRow({ row }: { row: ComponentSummary }): React.ReactElement {
   );
 }
 
-function McpPane(): React.ReactElement {
+/**
+ * Audit issue #18: McpPane and DriftPane accept a `focusRef` so the
+ * parent HealthView can scroll to (and momentarily highlight) the
+ * pane the user clicked from the Sidebar.
+ */
+interface FocusableProps {
+  focusRef?: React.RefObject<HTMLElement | null>;
+  focused?: boolean;
+}
+
+function McpPane({ focusRef, focused }: FocusableProps): React.ReactElement {
   const mcps = useComponents(MCP_FILTER);
 
   return (
-    <section className="health-pane" aria-labelledby="mcp-heading">
+    <section
+      ref={focusRef as React.RefObject<HTMLElement>}
+      className={`health-pane${focused ? " focused" : ""}`}
+      aria-labelledby="mcp-heading"
+    >
       <h3 id="mcp-heading">MCP servers</h3>
       <div className="health-table">
         <div className="health-row head">
@@ -126,9 +140,13 @@ function McpPane(): React.ReactElement {
   );
 }
 
-function DriftPane(): React.ReactElement {
+function DriftPane({ focusRef, focused }: FocusableProps): React.ReactElement {
   return (
-    <section className="health-pane" aria-labelledby="drift-heading">
+    <section
+      ref={focusRef as React.RefObject<HTMLElement>}
+      className={`health-pane${focused ? " focused" : ""}`}
+      aria-labelledby="drift-heading"
+    >
       <h3 id="drift-heading">Drift</h3>
       <p className="settings-todo">
         Drift detection lands in v1; see docs/10-roadmap.md.
@@ -263,6 +281,26 @@ export function HealthView(): React.ReactElement {
   const view = useUi((s) => s.view);
   const isActive = view === "health";
 
+  // Audit issue #18: when the Sidebar Drift / MCP rows route the user
+  // here they set `healthFocus`. We scroll the matching pane into view
+  // and apply a `.focused` class for ~1.4s, then clear the store flag
+  // so a subsequent click re-triggers the highlight.
+  const healthFocus = useUi((s) => s.healthFocus);
+  const setHealthFocus = useUi((s) => s.setHealthFocus);
+  const driftRef = useRef<HTMLElement | null>(null);
+  const mcpRef = useRef<HTMLElement | null>(null);
+  const HIGHLIGHT_MS = 1400;
+
+  useEffect(() => {
+    if (!isActive || healthFocus === null) return;
+    const target = healthFocus === "drift" ? driftRef.current : mcpRef.current;
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    const timer = window.setTimeout(() => setHealthFocus(null), HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [isActive, healthFocus, setHealthFocus]);
+
   return (
     <section
       className={`view${isActive ? " active" : ""}`}
@@ -283,8 +321,8 @@ export function HealthView(): React.ReactElement {
       </div>
 
       <div className="health-layout">
-        <McpPane />
-        <DriftPane />
+        <McpPane focusRef={mcpRef} focused={healthFocus === "mcp"} />
+        <DriftPane focusRef={driftRef} focused={healthFocus === "drift"} />
         <BloatedMemoryPane />
         <UsagePane />
       </div>

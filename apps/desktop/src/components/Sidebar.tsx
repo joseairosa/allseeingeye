@@ -174,17 +174,24 @@ function TypesGroup() {
   );
 }
 
+/**
+ * Audit issue #18: the Drift / MCP rows used to ship hardcoded "-"
+ * counts and just `setView("health")` without telling the view which
+ * pane to surface. The Cold row was removed wholesale because a Cold
+ * pane does not exist in HealthView. The remaining two rows now show
+ * real counts derived from live IPC data and set `healthFocus` so
+ * HealthView can scroll to and briefly highlight the matching pane.
+ */
+type HealthFocusId = "drift" | "mcp";
 interface HealthRowMeta {
-  id: string;
+  id: HealthFocusId;
   label: string;
-  count: string;
   ring: "warn" | "error" | "cold";
 }
 
 const HEALTH_ROWS: readonly HealthRowMeta[] = [
-  { id: "drift", label: "Drift", count: "-", ring: "warn" },
-  { id: "mcp", label: "MCP issues", count: "-", ring: "error" },
-  { id: "cold", label: "Cold", count: "-", ring: "cold" },
+  { id: "drift", label: "Drift", ring: "warn" },
+  { id: "mcp", label: "MCP servers", ring: "cold" },
 ] as const;
 
 /**
@@ -205,12 +212,21 @@ function pickSecurityRing(
 }
 
 function HealthGroup() {
-  // Drift / MCP probing / cold-component detection ship in v1; the row
-  // structure is in place so the sidebar layout doesn't reflow when
-  // those features land. The Security row is the one row driven by
-  // live IPC data today (Phase 7.3).
+  // Drift detection ships in v1 - until then the row reports "-" and
+  // navigating to it focuses the Drift pane (which itself shows the
+  // "lands in v1" notice). MCP count is the per-tool-kind aggregate
+  // across all detected tools, taken from the existing health summary.
   const setView = useUi((s) => s.setView);
+  const setHealthFocus = useUi((s) => s.setHealthFocus);
   const { data: securitySummary } = useSecuritySummary();
+  const { data: health } = useHealthSummary();
+  const mcpCount = (health?.byToolKind ?? [])
+    .filter((row) => row.kind === "mcp")
+    .reduce((acc, row) => acc + row.count, 0);
+  const countByRow: Record<HealthFocusId, string> = {
+    drift: "-",
+    mcp: mcpCount > 0 ? String(mcpCount) : "-",
+  };
   const securityCount = securitySummary?.total ?? 0;
   const securityRing = pickSecurityRing(securitySummary);
   return (
@@ -221,11 +237,14 @@ function HealthGroup() {
           key={h.id}
           type="button"
           className="side-row"
-          onClick={() => setView("health")}
+          onClick={() => {
+            setHealthFocus(h.id);
+            setView("health");
+          }}
         >
           <span className={`status-ring ${h.ring}`} />
           <span>{h.label}</span>
-          <span className="side-count">{h.count}</span>
+          <span className="side-count">{countByRow[h.id]}</span>
         </button>
       ))}
       <button

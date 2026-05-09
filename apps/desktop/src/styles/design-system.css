@@ -1355,6 +1355,32 @@ body.light pre {
   margin-bottom: 12px;
 }
 
+/* Audit issue #18: when the Sidebar Drift / MCP rows route the user
+   to Health, the targeted pane briefly pulses an accent ring so the
+   eye lands on it after the smooth-scroll. The keyframe respects
+   reduced-motion users (the rule below clamps the animation to a
+   no-op opacity flash). */
+.health-pane.focused {
+  animation: health-pane-focus 1.2s ease-out;
+  border-radius: var(--radius);
+}
+
+@keyframes health-pane-focus {
+  0% { box-shadow: 0 0 0 2px var(--accent-1); }
+  60% { box-shadow: 0 0 0 2px var(--accent-1); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .health-pane.focused {
+    animation: health-pane-focus-reduced 1.2s linear;
+  }
+  @keyframes health-pane-focus-reduced {
+    0%, 60% { background: rgba(96, 165, 250, 0.06); }
+    100% { background: transparent; }
+  }
+}
+
 .health-table {
   display: grid;
   border: 1px solid var(--border-subtle);

@@ -53,6 +53,13 @@ export interface UiState {
   telemetryEnabled: false;
   updateChannel: UpdateChannel;
   autoCheckUpdates: boolean;
+  /**
+   * Audit issue #18: Sidebar Health rows ("Drift", "MCP issues") set
+   * this when navigating to Health so the view can scroll to and
+   * briefly highlight the matching pane. Cleared automatically by the
+   * pane that consumes it after the highlight animation ends.
+   */
+  healthFocus: "drift" | "mcp" | null;
 
   setView: (view: ViewId) => void;
   setTheme: (theme: Theme) => void;
@@ -69,6 +76,7 @@ export interface UiState {
   toggleQuickLook: (force?: boolean) => void;
   toggleOnboarding: (force?: boolean) => void;
   togglePanicMode: (force?: boolean) => void;
+  setHealthFocus: (focus: UiState["healthFocus"]) => void;
 }
 
 /**
@@ -117,6 +125,7 @@ export const useUi = create<UiState>()(
       telemetryEnabled: false,
       updateChannel: "stable",
       autoCheckUpdates: true,
+      healthFocus: null,
 
       setView: (view) => set({ view }),
       setTheme: (theme) => set({ theme }),
@@ -147,6 +156,7 @@ export const useUi = create<UiState>()(
         set((s) => ({ quickLookOpen: force ?? !s.quickLookOpen })),
       toggleOnboarding: (force) =>
         set((s) => ({ onboardingOpen: force ?? !s.onboardingOpen })),
+      setHealthFocus: (focus) => set({ healthFocus: focus }),
       togglePanicMode: (force) =>
         set((s) => {
           const next = force ?? !s.panicMode;
