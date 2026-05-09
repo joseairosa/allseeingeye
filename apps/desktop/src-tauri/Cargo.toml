@@ -123,6 +123,36 @@ regex = "1"
 # the `Draft::Draft202012` variant is gated out via cfg.
 jsonschema = { version = "0.18", features = ["draft202012"] }
 
+# Phase 15: end-to-end encrypted local backup.
+# `aes-gcm` v0.10 is the RustCrypto AES-256-GCM AEAD implementation we
+# use for both file-data and DEK-wrap encryption. The crate is a thin
+# wrapper around `aes` + `ghash` and is the NIST-blessed primitive in
+# pure Rust. We do NOT hand-roll AES.
+aes-gcm = "0.10"
+# `x25519-dalek` v2 provides the Curve25519 Diffie-Hellman primitive
+# used for envelope key wrapping. Each blob carries its own ephemeral
+# X25519 keypair; the device long-term public key is the static side
+# of the ECDH agreement. v2.x removed the legacy non-canonical scalar
+# reduction footgun present in v1, which is why we pin v2 here.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+# `hkdf` v0.12 is the RustCrypto HKDF-SHA-256 KDF we run over the ECDH
+# shared secret to derive a wrapping key. SHA-256 comes from the
+# already-vendored `sha2` v0.10 crate.
+hkdf = "0.12"
+# `keyring` v3 is the cross-platform OS keychain client (macOS
+# Keychain, Windows Credential Manager, Linux libsecret/kwallet). We
+# store the X25519 device private key as 64-character hex under
+# service `dev.allseeingeye.backup`, account `device-key`. Failure
+# to access the keychain (no libsecret on Linux, locked Keychain on
+# macOS) maps to `BackupError::KeychainUnavailable` so the UI can
+# surface a recoverable error rather than crashing.
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
+# `rand_core` v0.6 is the trait surface for the OS-backed CSPRNG used
+# to seed AES-GCM nonces and ephemeral X25519 keys. Already pulled in
+# transitively by `aes-gcm` and `x25519-dalek` but we declare it as a
+# direct dep so the `OsRng` import path is auditable.
+rand_core = { version = "0.6", features = ["getrandom"] }
+
 [dev-dependencies]
 tempfile = "3"
 # `proptest` powers the round-trip property tests for the parser layer:
