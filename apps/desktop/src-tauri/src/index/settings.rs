@@ -39,6 +39,29 @@ pub const DEFAULT_PROJECT_MEMORY_ROOTS: &[&str] = &["~/Development", "~"];
 /// Backs the Settings -> Tools index toggle (audit issue #2).
 pub const KEY_EXCLUDED_TOOL_IDS: &str = "excludedToolIds";
 
+// Phase 15 - end-to-end encrypted local backup. Three keys cover the
+// state the backup module needs to surface from app_settings (the
+// keychain owns the private side):
+//
+// * `backupPublicKey` - hex-encoded 32-byte X25519 public key. Cached
+//   here so encryption never has to touch the keychain (only restore
+//   does). See `docs/15-backup-and-restore.md` section 15.2.
+// * `backupAutoEnabled` - boolean. When true, the auto-backup
+//   debouncer runs on `componentUpserted` events. Default true.
+// * `backupLastRun` - i64 unix seconds, or null. Last time
+//   `backup_now` finished a sweep (success OR failure with at least
+//   one encrypted blob). Drives the "last backup: 5 minutes ago" line
+//   in Settings.
+
+/// Setting key for the cached device backup public key (hex-encoded).
+pub const KEY_BACKUP_PUBLIC_KEY: &str = "backupPublicKey";
+
+/// Setting key for the auto-backup-on-edit toggle. Default `true`.
+pub const KEY_BACKUP_AUTO_ENABLED: &str = "backupAutoEnabled";
+
+/// Setting key for the last-backup timestamp (unix seconds).
+pub const KEY_BACKUP_LAST_RUN: &str = "backupLastRun";
+
 /// Read a setting as a JSON value. Returns `Ok(None)` when the key is
 /// absent. Returns `Ok(Some(Null))` only if the row was explicitly
 /// stored as the JSON string `"null"`.
@@ -174,6 +197,50 @@ pub fn read_project_memory_roots(handle: &IndexHandle) -> Vec<String> {
             .map(|s| (*s).to_owned())
             .collect()
     })
+}
+
+// ─── Phase 15 - typed accessors for backup-related settings ────────
+
+/// Read `backupAutoEnabled`. Defaults to `true` per spec 15.5
+/// ("Backup automatically after edits") - the user opts out, not in.
+#[must_use]
+pub fn read_backup_auto_enabled(handle: &IndexHandle) -> bool {
+    let raw = read_setting_raw(handle, KEY_BACKUP_AUTO_ENABLED)
+        .ok()
+        .flatten();
+    match raw {
+        Some(JsonValue::Bool(v)) => v,
+        _ => true,
+    }
+}
+
+/// Persist `backupAutoEnabled`. Idempotent. Used by the
+/// `backup_set_auto` IPC command and the auto-debouncer's tests.
+#[allow(dead_code)] // wired in via IPC commands committed in step 4.
+pub fn write_backup_auto_enabled(handle: &IndexHandle, enabled: bool) -> Result<()> {
+    write_setting_raw(handle, KEY_BACKUP_AUTO_ENABLED, &JsonValue::Bool(enabled))
+}
+
+/// Read `backupLastRun` as unix seconds. `None` when unset (no
+/// backup has ever completed). Used by the `backup_status` IPC
+/// command.
+#[allow(dead_code)] // wired in via IPC commands committed in step 4.
+#[must_use]
+pub fn read_backup_last_run(handle: &IndexHandle) -> Option<i64> {
+    let raw = read_setting_raw(handle, KEY_BACKUP_LAST_RUN).ok().flatten();
+    match raw {
+        Some(JsonValue::Number(n)) => n.as_i64(),
+        _ => None,
+    }
+}
+
+/// Persist `backupLastRun` as unix seconds.
+pub fn write_backup_last_run(handle: &IndexHandle, unix_seconds: i64) -> Result<()> {
+    write_setting_raw(
+        handle,
+        KEY_BACKUP_LAST_RUN,
+        &JsonValue::Number(unix_seconds.into()),
+    )
 }
 
 #[cfg(test)]
