@@ -223,6 +223,7 @@ pub fn run() {
             ipc::commands::check_path_readable,
             ipc::commands::rebuild_index,
             ipc::commands::reset_index,
+            ipc::commands::export_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

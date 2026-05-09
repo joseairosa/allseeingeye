@@ -21,18 +21,18 @@
 import { useCallback, useMemo, useState } from "react";
 import { useUi } from "@/store/ui";
 import { useTools, useHealthSummary } from "@/ipc/hooks";
-import {
-  useDiagnosticsEvents,
-  type StampedPipelineEvent,
-} from "@/lib/diagnosticsRing";
+import { useDiagnosticsEvents } from "@/lib/diagnosticsRing";
 import {
   sanitiseForClipboard,
   type DiagnosticsParseError,
-  type DiagnosticsReport,
-  type DiagnosticsRingEntry,
   type DiagnosticsToolEntry,
   type DiagnosticsToolKindCount,
 } from "@/lib/diagnosticsSanitiser";
+import {
+  buildReport,
+  detectPlatformLabel,
+  toParseError,
+} from "@/lib/diagnosticsReport";
 import {
   resetOnboarding as clearOnboardingFlag,
 } from "@/lib/onboarding";
@@ -45,14 +45,6 @@ const PATH_DISPLAY_MAX = 80;
 
 type CopyState = "idle" | "copied" | "fallback" | "error";
 
-function detectPlatformLabel(): string {
-  if (typeof navigator === "undefined") return "unknown";
-  const ua = navigator.userAgent;
-  // Matches "Macintosh", "Windows NT 10.0", "Linux x86_64" etc.
-  const match = /\(([^)]+)\)/.exec(ua);
-  return match?.[1] ?? "unknown";
-}
-
 function truncatePath(path: string): string {
   if (path.length <= PATH_DISPLAY_MAX) return path;
   // Keep the suffix - the basename and parent are usually most useful.
@@ -62,56 +54,6 @@ function truncatePath(path: string): string {
 
 function formatTimestamp(ms: number): string {
   return new Date(ms).toLocaleTimeString();
-}
-
-/**
- * Translate a StampedPipelineEvent into the wire-shape we emit in the
- * diagnostics report. We avoid leaking `Date` objects so JSON serialise
- * produces stable output across runs.
- */
-function toRingEntry(stamped: StampedPipelineEvent): DiagnosticsRingEntry {
-  return { timestamp: stamped.timestamp, event: stamped.event };
-}
-
-function toParseError(
-  stamped: StampedPipelineEvent,
-): DiagnosticsParseError | null {
-  if (stamped.event.event !== "parseError") return null;
-  return {
-    timestamp: stamped.timestamp,
-    id: stamped.event.id,
-    path: stamped.event.path,
-  };
-}
-
-function buildReport(args: {
-  events: StampedPipelineEvent[];
-  parseErrors: DiagnosticsParseError[];
-  panicActive: boolean;
-  panicLastToggledAt: number | null;
-  totalComponents: number;
-  totalParseErrors: number;
-  byToolKind: DiagnosticsToolKindCount[];
-  tools: DiagnosticsToolEntry[];
-}): DiagnosticsReport {
-  return {
-    appVersion: __APP_VERSION__,
-    platform: detectPlatformLabel(),
-    userAgent: typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
-    generatedAt: new Date().toISOString(),
-    panic: {
-      active: args.panicActive,
-      lastToggledAt: args.panicLastToggledAt,
-    },
-    index: {
-      totalComponents: args.totalComponents,
-      totalParseErrors: args.totalParseErrors,
-      byToolKind: args.byToolKind,
-    },
-    tools: args.tools,
-    recentEvents: args.events.map(toRingEntry),
-    recentParseErrors: args.parseErrors,
-  };
 }
 
 interface PanelHeadingProps {
@@ -185,6 +127,7 @@ export function DiagnosticsPanel(): React.ReactElement {
 
   const handleCopy = useCallback(async (): Promise<void> => {
     const report = buildReport({
+      appVersion: __APP_VERSION__,
       events,
       parseErrors,
       panicActive: panicMode,

@@ -283,3 +283,16 @@ export async function rebuildIndex(): Promise<ScanReport> {
 export async function resetIndex(): Promise<void> {
   return invoke<void>("reset_index");
 }
+
+/**
+ * Persist a sanitised diagnostics JSON snapshot to the user-chosen
+ * `targetPath`. The caller is responsible for sanitising the report
+ * (`sanitiseForClipboard` from `lib/diagnosticsSanitiser`) and for
+ * picking the target path through the Tauri dialog plugin.
+ */
+export async function exportDiagnostics(
+  targetPath: string,
+  contents: string,
+): Promise<void> {
+  return invoke<void>("export_diagnostics", { targetPath, contents });
+}

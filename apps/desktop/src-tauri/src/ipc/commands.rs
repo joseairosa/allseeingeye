@@ -426,6 +426,46 @@ pub async fn reset_index(state: State<'_, Arc<IndexHandle>>) -> Result<(), Strin
     .map_err(|e| format!("reset_index task panicked: {e}"))?
 }
 
+/// Persist a sanitised diagnostics JSON snapshot to `target_path`.
+///
+/// Backs the Settings -> Privacy "Diagnostics export" button (issue
+/// #9). The frontend builds the report (already sanitised by
+/// `sanitiseForClipboard`) and asks the user where to save through
+/// the `tauri-plugin-dialog` save-dialog before invoking us; this IPC
+/// is the thinnest possible writer.
+///
+/// The path goes through [`crate::safe_atomic_write_with_options`]
+/// using the target's parent directory as the trust root. We pass
+/// `allow_outside_home = true` because the user can legitimately
+/// save the snapshot anywhere they choose (external drive, shared
+/// folder, ...). Forbidden-segment checks (`.git`, `node_modules`,
+/// `target`, ...) still apply so an export cannot accidentally
+/// scribble into a build cache.
+#[tauri::command]
+pub fn export_diagnostics(target_path: String, contents: String) -> Result<(), String> {
+    export_diagnostics_inner(&target_path, &contents)
+}
+
+/// Test seam for `export_diagnostics`. Pure function plus filesystem
+/// IO so unit tests can drive it without standing up a Tauri runtime.
+pub fn export_diagnostics_inner(target_path: &str, contents: &str) -> Result<(), String> {
+    let path = std::path::PathBuf::from(target_path);
+    if path.as_os_str().is_empty() {
+        return Err("export target path is empty".to_owned());
+    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| "export target path has no parent directory".to_owned())?;
+    crate::safe_atomic_write_with_options(
+        &path,
+        contents.as_bytes(),
+        &[parent],
+        /* allow_outside_home: */ true,
+    )
+    .map_err(|e| e.to_string())
+}
+
 // ─── Pure functions exercised by tests ──────────────────────────────────
 
 /// Fetch a paginated, filtered list of `ComponentSummary` rows.
@@ -2529,5 +2569,49 @@ mod tests {
     #[test]
     fn check_path_readable_returns_false_for_empty_string() {
         assert!(!check_path_readable_inner(""));
+    }
+
+    // ─── Audit follow-ups - export_diagnostics (issue #9) ─────────────
+
+    /// Happy path - the IPC writes the JSON contents to the user-chosen
+    /// destination atomically (via `safe_atomic_write_with_options`)
+    /// and the file ends up with the exact bytes we passed in.
+    #[test]
+    fn export_diagnostics_writes_to_target_path() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("aseye-diagnostics.json");
+        let payload = r#"{"appVersion":"0.0.1"}"#;
+        export_diagnostics_inner(&target.to_string_lossy(), payload).expect("export");
+        let on_disk = fs::read_to_string(&target).expect("read");
+        assert_eq!(on_disk, payload);
+    }
+
+    /// Empty target path must surface a clear error rather than panic
+    /// on `parent()` returning `None`. The dialog plugin promises a
+    /// non-empty string when the user picks a location; this guard is
+    /// for the "user cancelled mid-flight" / API-misuse case.
+    #[test]
+    fn export_diagnostics_rejects_empty_target_path() {
+        let err = export_diagnostics_inner("", "{}").expect_err("empty must reject");
+        assert!(
+            err.contains("empty"),
+            "error should call out the empty path, got: {err}",
+        );
+    }
+
+    /// Forbidden-segment guard still applies even though the user
+    /// chose the path; we never want to scribble into a `.git/`
+    /// directory just because a misclick selected one in the dialog.
+    #[test]
+    fn export_diagnostics_refuses_forbidden_segment() {
+        let dir = tempdir().expect("tempdir");
+        let bad = dir.path().join(".git").join("dump.json");
+        fs::create_dir_all(bad.parent().unwrap()).expect("mkdir");
+        let err = export_diagnostics_inner(&bad.to_string_lossy(), "{}")
+            .expect_err("forbidden segment must reject");
+        assert!(
+            err.to_lowercase().contains(".git"),
+            "error should name the forbidden segment, got: {err}",
+        );
     }
 }

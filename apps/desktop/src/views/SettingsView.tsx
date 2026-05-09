@@ -1,13 +1,29 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useUi, type Theme, type Density, type McpProbingMode, type UpdateChannel } from "@/store/ui";
 import { detectedToolsFixture } from "@/lib/fixtures";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
-import { rebuildIndex, resetIndex, startFullScan } from "@/ipc";
 import {
+  exportDiagnostics,
+  rebuildIndex,
+  resetIndex,
+  startFullScan,
+} from "@/ipc";
+import {
+  useHealthSummary,
   useProjectMemoryRoots,
   useSetProjectMemoryRoots,
+  useTools,
 } from "@/ipc/hooks";
+import { useDiagnosticsEvents } from "@/lib/diagnosticsRing";
+import { buildReport } from "@/lib/diagnosticsReport";
+import {
+  sanitiseForClipboard,
+  type DiagnosticsParseError,
+  type DiagnosticsToolEntry,
+  type DiagnosticsToolKindCount,
+} from "@/lib/diagnosticsSanitiser";
 
 /**
  * Settings view (Phase 4.4).
@@ -457,10 +473,112 @@ function HealthPane() {
   );
 }
 
+/**
+ * Default file name for the Diagnostics export. Date-stamped so a
+ * support thread with multiple snapshots stays orderable.
+ */
+function defaultDiagnosticsFileName(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `aseye-diagnostics-${yyyy}${mm}${dd}.json`;
+}
+
+type DiagnosticsExportState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "saved"; path: string }
+  | { kind: "cancelled" }
+  | { kind: "error"; message: string };
+
 function PrivacyPane() {
-  function handleDiagnosticsExport(): void {
-    // TODO(phase-4.2): write a sanitised JSON to disk via the dialog plugin.
-    console.log("[settings] diagnostics export requested (phase 4.2 stub)");
+  const panicMode = useUi((s) => s.panicMode);
+  const panicLast = useUi((s) => s.panicModeLastToggledAt);
+
+  // Same data the DiagnosticsPanel reads. We re-query rather than
+  // share state so the export can be triggered from the Privacy pane
+  // without scrolling to the diagnostics card.
+  const tools = useTools();
+  const health = useHealthSummary();
+  const events = useDiagnosticsEvents();
+
+  const parseErrors = useMemo<DiagnosticsParseError[]>(() => {
+    const out: DiagnosticsParseError[] = [];
+    for (const stamped of events) {
+      if (stamped.event.event !== "parseError") continue;
+      out.push({
+        timestamp: stamped.timestamp,
+        id: stamped.event.id,
+        path: stamped.event.path,
+      });
+    }
+    return out;
+  }, [events]);
+
+  const toolEntries = useMemo<DiagnosticsToolEntry[]>(() => {
+    if (!tools.data) return [];
+    return tools.data.map((t) => ({
+      id: t.id,
+      displayName: t.displayName,
+      detected: t.detected,
+      binary: t.binary,
+      version: t.version,
+      watchRoots: t.existingRootPaths,
+    }));
+  }, [tools.data]);
+
+  const byToolKind = useMemo<DiagnosticsToolKindCount[]>(() => {
+    if (!health.data) return [];
+    return health.data.byToolKind.map((row) => ({
+      tool: row.tool,
+      kind: row.kind,
+      count: row.count,
+    }));
+  }, [health.data]);
+
+  const [exportState, setExportState] = useState<DiagnosticsExportState>({
+    kind: "idle",
+  });
+
+  // Issue #9 - the previous handler only console.log'd. Now: build
+  // the report, sanitise it, ask the user where to save through the
+  // Tauri dialog plugin, then write atomically through the
+  // `export_diagnostics` IPC.
+  async function handleDiagnosticsExport(): Promise<void> {
+    setExportState({ kind: "running" });
+    try {
+      const report = buildReport({
+        appVersion: __APP_VERSION__,
+        events,
+        parseErrors,
+        panicActive: panicMode,
+        panicLastToggledAt: panicLast,
+        totalComponents: health.data?.totalComponents ?? 0,
+        totalParseErrors: health.data?.totalParseErrors ?? 0,
+        byToolKind,
+        tools: toolEntries,
+      });
+      const sanitised = sanitiseForClipboard(report);
+      const json = JSON.stringify(sanitised, null, 2);
+
+      const target = await saveDialog({
+        title: "Save diagnostics snapshot",
+        defaultPath: defaultDiagnosticsFileName(),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof target !== "string" || target.length === 0) {
+        setExportState({ kind: "cancelled" });
+        return;
+      }
+
+      await exportDiagnostics(target, json);
+      setExportState({ kind: "saved", path: target });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[settings] diagnostics export failed", err);
+      setExportState({ kind: "error", message });
+    }
   }
 
   return (
@@ -480,13 +598,31 @@ function PrivacyPane() {
         <div className="settings-row-label">
           <strong>Diagnostics export</strong>
           <small>Saves a sanitised JSON snapshot for support.</small>
+          {exportState.kind === "saved" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              saved to <span className="mono">{exportState.path}</span>
+            </small>
+          ) : null}
+          {exportState.kind === "cancelled" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              export cancelled
+            </small>
+          ) : null}
+          {exportState.kind === "error" ? (
+            <small className="settings-todo" role="status" aria-live="polite">
+              export failed: {exportState.message}
+            </small>
+          ) : null}
         </div>
         <button
           type="button"
           className="text-button"
-          onClick={handleDiagnosticsExport}
+          onClick={() => {
+            void handleDiagnosticsExport();
+          }}
+          disabled={exportState.kind === "running"}
         >
-          export
+          {exportState.kind === "running" ? "exporting…" : "export"}
         </button>
       </div>
     </section>
