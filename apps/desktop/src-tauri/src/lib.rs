@@ -114,6 +114,103 @@ pub use backup::{
     RestoreErrorEntry, RestoreErrorKind, RestoreReport,
 };
 
+// Phase 15: integration-test seams. The real-home proof in
+// `tests/backup_real_home_proof.rs` needs a way to drive the
+// orchestrator with a custom storage backend (so encrypted blobs
+// land under the test's tempdir, not `~/.aseye-backup/`) AND a
+// custom keychain (so the test can opt in / out of the OS keychain
+// via `ASEYE_TEST_KEYCHAIN`). These re-exports live in the public
+// crate surface but are namespaced under `__test_only_*` to
+// communicate "do not consume from the production binary".
+//
+// We deliberately do NOT gate them on `#[cfg(test)]` because
+// integration tests under `tests/` compile against the crate as a
+// dependency (the same way an external user would), so they cannot
+// see anything `#[cfg(test)]`-private.
+#[doc(hidden)]
+pub use backup::keychain::test_support::InMemoryKeychain as __test_only_InMemoryKeychainHandle;
+#[doc(hidden)]
+pub use backup::orchestrate::backup_now_with as __test_only_backup_now_with_kc_inner;
+#[doc(hidden)]
+pub use backup::orchestrate::restore_now_with as __test_only_restore_now_with_inner;
+
+/// Test-only helper: build a fresh in-memory keychain.
+#[doc(hidden)]
+#[must_use]
+pub fn __test_only_in_memory_keychain() -> __test_only_InMemoryKeychainHandle {
+    __test_only_InMemoryKeychainHandle::new()
+}
+
+/// Test-only helper: run `backup_now` against an explicit storage
+/// backend, using the `SystemKeychain`. Used by the integration
+/// proof when `ASEYE_TEST_KEYCHAIN=1`.
+#[doc(hidden)]
+pub fn __test_only_backup_now_with(
+    handle: std::sync::Arc<IndexHandle>,
+    storage: &LocalDirectoryStorage,
+) -> std::result::Result<BackupReport, String> {
+    let kc = backup::keychain::SystemKeychain;
+    backup::orchestrate::backup_now_with(handle, storage, &kc, None).map_err(|e| e.to_string())
+}
+
+/// Test-only helper: run `restore_now` against an explicit storage
+/// backend.
+#[doc(hidden)]
+pub fn __test_only_restore_now_with(
+    handle: std::sync::Arc<IndexHandle>,
+    storage: &LocalDirectoryStorage,
+    dry_run: bool,
+) -> std::result::Result<RestoreReport, String> {
+    let kc = backup::keychain::SystemKeychain;
+    backup::orchestrate::restore_now_with(handle, storage, &kc, dry_run).map_err(|e| e.to_string())
+}
+
+/// Test-only helper: run `backup_now` with both storage AND keychain
+/// injected. The integration proof uses the in-memory keychain path
+/// when `ASEYE_TEST_KEYCHAIN` is unset.
+#[doc(hidden)]
+pub fn __test_only_backup_now_with_kc(
+    handle: std::sync::Arc<IndexHandle>,
+    storage: &LocalDirectoryStorage,
+    keychain: &__test_only_InMemoryKeychainHandle,
+    target_ids: Option<&[String]>,
+) -> std::result::Result<BackupReport, String> {
+    backup::orchestrate::backup_now_with(handle, storage, keychain, target_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// Test-only helper: read + decrypt a single component's blob using
+/// the supplied keychain. Used by the integration proof to byte-
+/// compare the round-trip without overwriting on-disk files.
+#[doc(hidden)]
+pub fn __test_only_decrypt_blob_with_kc(
+    handle: &IndexHandle,
+    storage: &LocalDirectoryStorage,
+    keychain: &__test_only_InMemoryKeychainHandle,
+    component_id: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    use backup::envelope::decrypt_blob;
+    use backup::keychain::{decode_private_key, Keychain};
+    use backup::manifest::read_manifest_entry;
+    use backup::storage::BackupStorage;
+    use x25519_dalek::StaticSecret;
+
+    let entry = read_manifest_entry(handle, component_id)
+        .map_err(|e| format!("manifest: {e}"))?
+        .ok_or_else(|| format!("no manifest entry for {component_id}"))?;
+    let blob = storage
+        .get_blob(&entry.blob_path)
+        .map_err(|e| format!("storage: {e}"))?;
+    let priv_hex = keychain
+        .get_private_key_hex()
+        .map_err(|e| format!("keychain: {e}"))?;
+    let priv_bytes = decode_private_key(&priv_hex).map_err(|e| format!("decode: {e}"))?;
+    let priv_key = StaticSecret::from(priv_bytes);
+    let plaintext = decrypt_blob(&priv_key, &blob).map_err(|e| format!("decrypt: {e}"))?;
+    drop(priv_key);
+    Ok(plaintext)
+}
+
 use std::sync::Arc;
 
 use tauri::Manager;
