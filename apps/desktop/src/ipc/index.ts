@@ -19,6 +19,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BackupReport,
+  BackupStatusReport,
   ComponentDetail,
   ComponentDetailWithRaw,
   ComponentFilter,
@@ -31,6 +33,7 @@ import type {
   FindingSummary,
   HealthSummary,
   IpcError,
+  RestoreReport,
   SaveOutcome,
   ScanReport,
   SearchQuery,
@@ -41,6 +44,8 @@ import type {
 } from "@aseye/shared-types";
 
 export type {
+  BackupReport,
+  BackupStatusReport,
   ComponentDetail,
   ComponentDetailWithRaw,
   ComponentFilter,
@@ -53,6 +58,7 @@ export type {
   FindingSummary,
   HealthSummary,
   IpcError,
+  RestoreReport,
   SaveOutcome,
   ScanReport,
   SearchQuery,
@@ -251,6 +257,38 @@ export async function getProjectMemoryRoots(): Promise<string[]> {
  */
 export async function setProjectMemoryRoots(roots: string[]): Promise<void> {
   return invoke<void>("set_project_memory_roots", { roots });
+}
+
+// ─── Phase 15 - backup + restore ──────────────────────────────────────
+
+/**
+ * Run a backup pass. Idempotent: components whose plaintext hash
+ * matches the existing manifest entry are skipped. Per-component
+ * failures collect in the report rather than aborting the sweep.
+ */
+export async function backupNow(): Promise<BackupReport> {
+  return invoke<BackupReport>("backup_now");
+}
+
+/**
+ * Run a restore pass. `dryRun = true` reports what would happen
+ * without writing any files; `false` performs the actual restore.
+ * Files whose local mtime is newer than the backup `encrypted_at`
+ * are skipped server-side so the user's recent work is not
+ * overwritten.
+ */
+export async function restoreNow(dryRun: boolean): Promise<RestoreReport> {
+  return invoke<RestoreReport>("restore_now", { dryRun });
+}
+
+/** Lightweight status payload for the Settings backup pane. */
+export async function backupStatus(): Promise<BackupStatusReport> {
+  return invoke<BackupStatusReport>("backup_status");
+}
+
+/** Toggle the auto-after-edit backup behaviour. */
+export async function backupSetAuto(enabled: boolean): Promise<void> {
+  return invoke<void>("backup_set_auto", { enabled });
 }
 
 // ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────

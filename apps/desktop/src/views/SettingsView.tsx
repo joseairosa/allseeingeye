@@ -10,9 +10,13 @@ import {
   startFullScan,
 } from "@/ipc";
 import {
+  useBackupNow,
+  useBackupSetAuto,
+  useBackupStatus,
   useExcludedToolIds,
   useHealthSummary,
   useProjectMemoryRoots,
+  useRestoreNow,
   useSetProjectMemoryRoots,
   useSetToolIndexed,
   useTools,
@@ -545,6 +549,352 @@ type DiagnosticsExportState =
   | { kind: "cancelled" }
   | { kind: "error"; message: string };
 
+/**
+ * Phase 15: encrypted local backup of every indexed component.
+ *
+ * The pane shows current status (manifest count, last run, storage
+ * dir), exposes the manual "Backup now" action, an auto-backup
+ * toggle, and a restore flow gated by a confirm dialog. The
+ * cryptography is end-to-end at this point (`backup_now` is the
+ * single IPC the user has to remember); the pane is purely a status
+ * + control surface.
+ */
+function BackupPane() {
+  const status = useBackupStatus();
+  const backupNowMut = useBackupNow();
+  const restoreNowMut = useRestoreNow();
+  const setAutoMut = useBackupSetAuto();
+
+  type Toast =
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string };
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
+  const [lastDryRun, setLastDryRun] = useState<{
+    total: number;
+    restored: number;
+    skippedLocalNewer: number;
+    errors: number;
+    elapsedMs: bigint;
+  } | null>(null);
+
+  function pushSuccess(message: string): void {
+    setToast({ kind: "success", message });
+  }
+  function pushError(message: string): void {
+    setToast({ kind: "error", message });
+  }
+
+  // Dismiss the success toast after a few seconds; errors persist.
+  useEffect(() => {
+    if (toast === null) return;
+    if (toast.kind === "error") return;
+    const id = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  function formatLastBackupAt(ts: bigint | null): string {
+    if (ts === null) return "never";
+    const seconds = Number(ts);
+    if (!Number.isFinite(seconds) || seconds === 0) return "never";
+    const now = Math.floor(Date.now() / 1000);
+    const delta = now - seconds;
+    if (delta < 60) return "just now";
+    if (delta < 3600) {
+      const m = Math.floor(delta / 60);
+      return `${m} minute${m === 1 ? "" : "s"} ago`;
+    }
+    if (delta < 86_400) {
+      const h = Math.floor(delta / 3600);
+      return `${h} hour${h === 1 ? "" : "s"} ago`;
+    }
+    const d = Math.floor(delta / 86_400);
+    return `${d} day${d === 1 ? "" : "s"} ago`;
+  }
+
+  async function handleBackup(): Promise<void> {
+    setToast(null);
+    try {
+      const report = await backupNowMut.mutateAsync();
+      const errs = report.errors.length;
+      const baseMsg =
+        `Backed up ${report.encrypted} of ${report.total} (${report.skippedUnchanged} unchanged)`;
+      if (errs > 0) {
+        pushError(`${baseMsg}, ${errs} error${errs === 1 ? "" : "s"}`);
+      } else {
+        pushSuccess(`${baseMsg} in ${report.elapsedMs}ms`);
+      }
+    } catch (err) {
+      pushError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleDryRun(): Promise<void> {
+    setToast(null);
+    try {
+      const report = await restoreNowMut.mutateAsync(true);
+      setLastDryRun({
+        total: report.total,
+        restored: report.restored,
+        skippedLocalNewer: report.skippedLocalNewer,
+        errors: report.errors.length,
+        elapsedMs: report.elapsedMs,
+      });
+    } catch (err) {
+      pushError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleRestoreConfirm(): Promise<void> {
+    setRestoreConfirmOpen(false);
+    setToast(null);
+    try {
+      const report = await restoreNowMut.mutateAsync(false);
+      const errs = report.errors.length;
+      const baseMsg =
+        `Restored ${report.restored} of ${report.total}` +
+        ` (${report.skippedLocalNewer} skipped because local was newer)`;
+      if (errs > 0) {
+        pushError(`${baseMsg}, ${errs} error${errs === 1 ? "" : "s"}`);
+      } else {
+        pushSuccess(`${baseMsg} in ${report.elapsedMs}ms`);
+      }
+    } catch (err) {
+      pushError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function handleAutoToggle(next: boolean): void {
+    setAutoMut.mutate(next, {
+      onError: (err) => {
+        pushError(err instanceof Error ? err.message : String(err));
+      },
+    });
+  }
+
+  const data = status.data;
+  const ipcBusy =
+    backupNowMut.isPending ||
+    restoreNowMut.isPending ||
+    setAutoMut.isPending ||
+    status.isFetching;
+
+  return (
+    <section
+      className="health-pane settings-pane"
+      aria-labelledby="settings-backup"
+    >
+      <h3 id="settings-backup">Backup</h3>
+
+      {toast ? (
+        <div
+          className="validation-box"
+          role={toast.kind === "error" ? "alert" : "status"}
+          aria-live="polite"
+          data-toast-kind={toast.kind}
+        >
+          <span>{toast.kind === "error" ? "!" : "✓"}</span>
+          <p>{toast.message}</p>
+          {toast.kind === "error" ? (
+            <button
+              type="button"
+              className="text-button quiet"
+              onClick={() => setToast(null)}
+              aria-label="dismiss"
+              style={{ marginLeft: "auto" }}
+            >
+              dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="settings-row settings-row-stacked">
+        <div className="settings-row-label">
+          <strong>Status</strong>
+          {status.isPending ? (
+            <small className="settings-todo">loading…</small>
+          ) : status.isError ? (
+            <small className="settings-todo" role="alert">
+              could not load backup status: {status.error.message}
+            </small>
+          ) : data ? (
+            <>
+              <small>
+                Backed up <strong>{data.manifestCount}</strong> components
+              </small>
+              <small>
+                Last backup: <strong>{formatLastBackupAt(data.lastBackupAt)}</strong>
+              </small>
+              <small>
+                Storage: <span className="mono">{data.backupDir}</span>
+              </small>
+              <small>
+                Encryption: device-bound X25519 + AES-256-GCM. The private
+                key is held in your OS keychain and never leaves this Mac.
+              </small>
+              {!data.keyPresent ? (
+                <small className="settings-todo" role="status">
+                  Key not yet generated. Click "Backup now" to create it on
+                  first use.
+                </small>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="settings-row settings-row-stacked">
+        <div className="settings-row-label">
+          <strong>Actions</strong>
+          <small>
+            Backup runs locally, idempotent on unchanged files. Restore
+            never overwrites a file whose local mtime is newer than the
+            backup.
+          </small>
+        </div>
+        <div className="settings-row-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              void handleBackup();
+            }}
+            disabled={ipcBusy}
+            aria-busy={backupNowMut.isPending}
+          >
+            {backupNowMut.isPending ? "Backing up…" : "Backup now"}
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              void handleDryRun();
+            }}
+            disabled={ipcBusy || (data?.manifestCount ?? 0) === 0}
+            title={
+              (data?.manifestCount ?? 0) === 0
+                ? "No backups yet to preview"
+                : "Show what restore would do without writing anything"
+            }
+          >
+            {restoreNowMut.isPending && lastDryRun === null
+              ? "Previewing…"
+              : "Preview restore"}
+          </button>
+          <button
+            type="button"
+            className="text-button quiet"
+            onClick={() => setRestoreConfirmOpen(true)}
+            disabled={ipcBusy || (data?.manifestCount ?? 0) === 0}
+          >
+            Restore now…
+          </button>
+        </div>
+      </div>
+
+      {lastDryRun !== null ? (
+        <div className="settings-row settings-row-stacked">
+          <div className="settings-row-label">
+            <strong>Restore preview</strong>
+            <small>
+              Would restore <strong>{lastDryRun.restored}</strong> of{" "}
+              <strong>{lastDryRun.total}</strong>;{" "}
+              <strong>{lastDryRun.skippedLocalNewer}</strong> skipped because
+              local copies are newer than the backup
+              {lastDryRun.errors > 0 ? (
+                <>
+                  {" "}
+                  ({lastDryRun.errors} would error)
+                </>
+              ) : null}
+              .
+            </small>
+          </div>
+          <div className="settings-row-actions">
+            <button
+              type="button"
+              className="text-button quiet"
+              onClick={() => setLastDryRun(null)}
+            >
+              clear preview
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <strong>Auto-backup</strong>
+          <small>
+            Run a backup pass automatically after edits, debounced 5s so
+            a stream of saves coalesces into one pass.
+          </small>
+        </div>
+        <label
+          className="settings-toggle"
+          aria-label="auto-backup after edits"
+        >
+          <input
+            type="checkbox"
+            checked={data?.autoBackupEnabled ?? false}
+            disabled={ipcBusy}
+            onChange={(e) => handleAutoToggle(e.target.checked)}
+          />
+          <span>{data?.autoBackupEnabled ? "on" : "off"}</span>
+        </label>
+      </div>
+
+      <p className="settings-todo" role="note">
+        Cross-device restore is not supported in v0. The private key is
+        device-bound. See <span className="mono">docs/15</span> for the
+        threat model and the production migration path.
+      </p>
+
+      {restoreConfirmOpen ? (
+        <div
+          className="validation-box"
+          role="alertdialog"
+          aria-labelledby="restore-confirm-title"
+          aria-describedby="restore-confirm-body"
+        >
+          <span>!</span>
+          <div>
+            <p id="restore-confirm-title">
+              <strong>Restore from backup?</strong>
+            </p>
+            <p id="restore-confirm-body">
+              This will overwrite local files that are older than their
+              backup. Files newer than their backup are skipped server-side.
+              {" "}
+              <strong>This cannot be undone.</strong>
+            </p>
+            <div className="settings-row-actions" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="text-button quiet"
+                onClick={() => setRestoreConfirmOpen(false)}
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  void handleRestoreConfirm();
+                }}
+                disabled={restoreNowMut.isPending}
+              >
+                {restoreNowMut.isPending ? "Restoring…" : "Restore"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function PrivacyPane() {
   const panicMode = useUi((s) => s.panicMode);
   const panicLast = useUi((s) => s.panicModeLastToggledAt);
@@ -778,6 +1128,7 @@ export function SettingsView() {
         <ToolsPane />
         <IndexPane />
         <HealthPane />
+        <BackupPane />
         <PrivacyPane />
         <UpdatesPane />
         <DiagnosticsPane />

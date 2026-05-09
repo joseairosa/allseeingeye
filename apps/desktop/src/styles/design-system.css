@@ -658,6 +658,19 @@ kbd {
   padding: 0 10px;
 }
 
+/* Phase 15 backup pane: simple inline checkbox + label, kept on
+   theme so the auto-backup toggle does not look like a stub. */
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.settings-toggle input[type="checkbox"] {
+  accent-color: var(--accent-1);
+}
+
 /* Filter popover (audit issue #6). The anchor is the inventory-toolbar
    "filters" button; the popover is positioned absolutely beneath it so
    it overlays the filter-strip without pushing layout. */

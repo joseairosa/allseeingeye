@@ -15,6 +15,8 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import type {
+  BackupReport,
+  BackupStatusReport,
   ComponentDetail,
   ComponentDetailWithRaw,
   ComponentFilter,
@@ -26,6 +28,7 @@ import type {
   FindingSummary,
   HealthSummary,
   PipelineEvent,
+  RestoreReport,
   SaveOutcome,
   SearchQuery,
   SearchResult,
@@ -34,6 +37,9 @@ import type {
   ToolId,
 } from "@aseye/shared-types";
 import {
+  backupNow,
+  backupSetAuto,
+  backupStatus,
   getComponent,
   getComponentWithRaw,
   getExcludedToolIds,
@@ -45,6 +51,7 @@ import {
   listSecurityFindings,
   listTools,
   readComponentRaw,
+  restoreNow,
   saveComponent,
   search,
   setToolIndexed,
@@ -80,6 +87,8 @@ export const QUERY_KEYS = {
   cost: ["cost"] as const,
   /** Phase 14B - app settings reads (project memory roots, ...). */
   settings: ["settings"] as const,
+  /** Phase 15 - backup status (manifest count, last run, auto flag). */
+  backup: ["backup"] as const,
 } as const;
 
 const STALE_TOOLS_MS = 30_000;
@@ -517,6 +526,69 @@ export function useSetProjectMemoryRoots(): UseMutationResult<
       void qc.invalidateQueries({
         queryKey: [...QUERY_KEYS.settings, "projectMemoryRoots"] as const,
       });
+    },
+  });
+}
+
+// ─── Phase 15 - backup + restore ──────────────────────────────────────
+
+/**
+ * Read the backup status payload (manifest count, last run, auto
+ * flag, backup directory). Refetches on a 30s stale window plus
+ * after every backup / restore mutation invalidation.
+ */
+export function useBackupStatus(): UseQueryResult<BackupStatusReport, Error> {
+  return useQuery({
+    queryKey: [...QUERY_KEYS.backup, "status"] as const,
+    queryFn: backupStatus,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Trigger a backup pass. The Settings pane shows a busy state while
+ * the mutation is in flight; on settle the status query is
+ * invalidated so the pane reflects the new manifest count.
+ */
+export function useBackupNow(): UseMutationResult<BackupReport, Error, void> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => backupNow(),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.backup });
+    },
+  });
+}
+
+/**
+ * Trigger a restore pass. `dryRun = true` returns the report without
+ * touching disk; `false` performs the actual restore. Both paths
+ * invalidate the backup status (the manifest doesn't change but the
+ * "last seen" should update if the call succeeded).
+ */
+export function useRestoreNow(): UseMutationResult<
+  RestoreReport,
+  Error,
+  boolean
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dryRun: boolean) => restoreNow(dryRun),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.backup });
+    },
+  });
+}
+
+/**
+ * Toggle the auto-after-edit backup behaviour.
+ */
+export function useBackupSetAuto(): UseMutationResult<void, Error, boolean> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => backupSetAuto(enabled),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.backup });
     },
   });
 }

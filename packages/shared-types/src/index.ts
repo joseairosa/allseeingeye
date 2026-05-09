@@ -72,6 +72,17 @@ export type { TokenTotals } from "../../../apps/desktop/src-tauri/bindings/usage
 export type { PriceLookup } from "../../../apps/desktop/src-tauri/bindings/usage/PriceLookup";
 export type { ToolKind as UsageToolKind } from "../../../apps/desktop/src-tauri/bindings/usage/UsageToolKind";
 
+// Phase 15: backup + restore wire types. The Settings -> Backup pane
+// consumes `backup_now`, `restore_now`, `backup_status`, and
+// `backup_set_auto`; every payload type lives under `bindings/backup/`.
+export type { BackupReport } from "../../../apps/desktop/src-tauri/bindings/backup/BackupReport";
+export type { BackupErrorEntry } from "../../../apps/desktop/src-tauri/bindings/backup/BackupErrorEntry";
+export type { BackupErrorKind } from "../../../apps/desktop/src-tauri/bindings/backup/BackupErrorKind";
+export type { BackupStatusReport } from "../../../apps/desktop/src-tauri/bindings/backup/BackupStatus";
+export type { RestoreReport } from "../../../apps/desktop/src-tauri/bindings/backup/RestoreReport";
+export type { RestoreErrorEntry } from "../../../apps/desktop/src-tauri/bindings/backup/RestoreErrorEntry";
+export type { RestoreErrorKind } from "../../../apps/desktop/src-tauri/bindings/backup/RestoreErrorKind";
+
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";
 
