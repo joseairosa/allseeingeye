@@ -28,16 +28,22 @@ function GraphNode({ x, y, iconId, name, small, selected, issue }: NodeProps) {
   const cls = ["graph-node", selected ? "selected" : "", issue ? "issue" : ""]
     .filter(Boolean)
     .join(" ");
+  // Audit issue #12: nodes used to be `<button>` elements, which made
+  // them keyboard-tabbable and looked clickable, but had no onClick.
+  // The map is an illustrative stub (see banner below) so the nodes
+  // are decorative; rendering as a `div` with `aria-hidden` removes
+  // the lie. When the real Sigma.js graph lands the node host swaps
+  // back to an interactive element with selection + Quick Look wired.
   return (
-    <button
-      type="button"
+    <div
       className={cls}
       style={{ "--x": `${x}px`, "--y": `${y}px` } as React.CSSProperties}
+      aria-hidden="true"
     >
       <TypeIcon id={iconId} />
       <span>{name}</span>
       <small>{small}</small>
-    </button>
+    </div>
   );
 }
 
@@ -59,11 +65,14 @@ export function MapView() {
     >
       <div className="view-toolbar">
         <h2 id="map-heading">Relationship map</h2>
-        <div className="segmented" role="group" aria-label="cluster mode">
-          <button type="button" className="active" disabled>tool</button>
-          <button type="button" disabled>type</button>
-          <button type="button" disabled>project</button>
-        </div>
+        {/*
+          Audit issue #14: a "tool / type / project" cluster-mode picker
+          used to live here but every button was permanently disabled
+          (no `clusterMode` state in the store, no graph implementation
+          to drive). Rather than tease the picker, it has been removed
+          until the real graph lands - at which point the picker
+          returns alongside a `useUi.clusterMode` field.
+        */}
       </div>
 
       <div

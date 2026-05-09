@@ -24,7 +24,7 @@ import {
   formatTokensK,
   OVERSIZED_MEMORY_BYTES,
 } from "@/lib/tokens";
-import { NavEditorIcon, PlusIcon, ShieldCheckIcon } from "@/components/icons";
+import { NavEditorIcon, ShieldCheckIcon } from "@/components/icons";
 import type { ComponentFilter, ComponentSummary } from "@aseye/shared-types";
 
 const MCP_FILTER: ComponentFilter = {
@@ -270,10 +270,14 @@ export function HealthView(): React.ReactElement {
     >
       <div className="view-toolbar">
         <h2 id="health-heading">Health</h2>
-        <button type="button" className="text-button" disabled>
-          <PlusIcon />
-          probe selected
-        </button>
+        {/*
+          Audit issue #1: a "probe selected" button used to live here
+          but the MCP probing pipeline was never built and the McpPane
+          ships no row-selection affordance. Rather than leave a
+          permanently disabled control teasing the feature, the button
+          was removed. When MCP probing lands the toolbar gains it
+          back alongside row checkboxes in McpPane.
+        */}
       </div>
 
       <div className="health-layout">

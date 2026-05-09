@@ -139,17 +139,12 @@ function GeneralPane() {
         </div>
       </div>
 
-      <div className="settings-row">
-        <div className="settings-row-label">
-          <strong>Dyslexia-friendly font</strong>
-          <small className="settings-todo">
-            Coming soon - bundled font + CSS variable still pending.
-          </small>
-        </div>
-        <button type="button" className="text-button quiet" disabled>
-          enable
-        </button>
-      </div>
+      {/*
+        Audit issue #13: a "Dyslexia-friendly font" row used to live
+        here but the bundled font + CSS variable were never shipped.
+        The row has been removed; it returns when an OpenDyslexic-
+        compatible asset lands and `--font-ui` can switch on a setting.
+      */}
     </section>
   );
 }
@@ -645,12 +640,26 @@ function PrivacyPane() {
       <div className="settings-row">
         <div className="settings-row-label">
           <strong>Telemetry</strong>
-          <small>Forced off in MVP. Ships post-MVP with explicit opt-in.</small>
+          <small>
+            Forced off in MVP per <span className="mono">docs/12</span>.
+            Ships post-MVP with an explicit opt-in toggle.
+          </small>
         </div>
-        <label className="settings-todo">
-          <input type="checkbox" checked={false} disabled readOnly />{" "}
-          disabled
-        </label>
+        {/*
+          Audit issue #15: this used to render as a permanently disabled
+          checkbox, which read as "you don't have permission to toggle
+          this" rather than "the feature is intentionally absent". A
+          status pill says exactly what's true: telemetry is off, and
+          there's nothing to toggle.
+        */}
+        <span
+          className="health-pill ok"
+          role="status"
+          aria-label="telemetry is off in this build"
+          title="Telemetry will return as a real opt-in once it ships post-MVP"
+        >
+          off in MVP
+        </span>
       </div>
       <div className="settings-row">
         <div className="settings-row-label">

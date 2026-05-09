@@ -123,10 +123,14 @@ function ToolsGroup() {
           </button>
         );
       })}
-      <button type="button" className="side-row quiet">
-        <span className="side-icon">+</span>
-        <span>Add tool</span>
-      </button>
+      {/*
+        Audit issue #16: an "Add tool" row used to live here but the
+        registry is hardcoded - there is no path to register a custom
+        tool root at runtime. Rather than tease the affordance, the
+        row has been removed. A future "Add custom tool" feature would
+        add it back and route to a Settings -> Tools section that owns
+        the custom-root list.
+      */}
     </section>
   );
 }

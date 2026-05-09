@@ -17,13 +17,7 @@ import type {
   ToolId,
 } from "@aseye/shared-types";
 import { RedactedPreview } from "./RedactedPreview";
-import {
-  CloseIcon,
-  NavEditorIcon,
-  PinIcon,
-  ShieldIcon,
-  TagIcon,
-} from "./icons";
+import { CloseIcon, NavEditorIcon, ShieldIcon } from "./icons";
 
 const TOOL_DISPLAY_NAME: Record<ToolId, string> = {
   "claude-code": "Claude Code",
@@ -244,12 +238,13 @@ export function QuickLook() {
           <NavEditorIcon />
           open editor
         </button>
-        <button type="button" className="icon-button" aria-label="pin component" title="Pin">
-          <PinIcon />
-        </button>
-        <button type="button" className="icon-button" aria-label="tag component" title="Tag">
-          <TagIcon />
-        </button>
+        {/*
+          Audit issue #4: pin and tag icon buttons used to live here but
+          neither pinning nor tagging exists in the data model today.
+          Rather than ship dead-click controls they have been removed.
+          When the features land they regain their slots next to the
+          primary "open editor" action.
+        */}
       </div>
     </aside>
   );
