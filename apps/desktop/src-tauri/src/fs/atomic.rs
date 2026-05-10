@@ -129,6 +129,25 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> Result<(), FsError> {
 /// the source or writing the backup fails. Backup itself is written via
 /// `atomic_write` so a partially written backup file is never observed.
 pub fn write_sidecar_backup(path: &Path) -> Result<Option<PathBuf>, FsError> {
+    write_sidecar_backup_with_suffix(path, ".aseye-backup")
+}
+
+/// Like [`write_sidecar_backup`] but with a caller-supplied suffix.
+///
+/// The restore flow uses this with `".aseye-pre-restore-<unix>.bak"`
+/// so multiple restores produce distinct sidecars rather than
+/// clobbering each other. Editor save keeps using the no-arg form
+/// because it overwrites in place and only the latest pre-save copy
+/// is interesting for one-shot recovery.
+///
+/// Returns `Ok(Some(sidecar_path))` on success, `Ok(None)` if the
+/// source path does not exist (nothing to back up), or the matching
+/// `FsError` variant if reading the source or writing the sidecar
+/// fails.
+pub fn write_sidecar_backup_with_suffix(
+    path: &Path,
+    suffix: &str,
+) -> Result<Option<PathBuf>, FsError> {
     if !path.exists() {
         return Ok(None);
     }
@@ -136,7 +155,7 @@ pub fn write_sidecar_backup(path: &Path) -> Result<Option<PathBuf>, FsError> {
         path: path.to_path_buf(),
         source,
     })?;
-    let backup = backup_path_for(path);
+    let backup = sidecar_path_for(path, suffix);
     atomic_write(&backup, &bytes)?;
     Ok(Some(backup))
 }
@@ -154,14 +173,16 @@ fn temp_path_for(path: &Path) -> PathBuf {
     parent.join(format!("{file_name}.aseye-tmp-{}", Uuid::new_v4()))
 }
 
-/// Compute the sidecar backup path: `<path>.aseye-backup`.
-fn backup_path_for(path: &Path) -> PathBuf {
+/// Compute a sidecar path next to `path` with the given suffix
+/// appended to the filename: `<filename><suffix>` inside the parent
+/// directory.
+fn sidecar_path_for(path: &Path, suffix: &str) -> PathBuf {
     let parent = parent_dir(path).unwrap_or_else(|| PathBuf::from("."));
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    parent.join(format!("{file_name}.aseye-backup"))
+    parent.join(format!("{file_name}{suffix}"))
 }
 
 /// Lift `Path::parent` into a `PathBuf` for ergonomic use across the call

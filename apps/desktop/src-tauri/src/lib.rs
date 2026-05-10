@@ -32,7 +32,8 @@ pub use index::{default_db_path, IndexError, IndexHandle, ReadConnection, Result
 // into the private module path. Mirrors how `IndexHandle` is exposed.
 pub use fs::{
     assert_safe_target, assert_safe_target_with_override, assert_within_root, atomic_write,
-    safe_atomic_write, safe_atomic_write_with_options, write_sidecar_backup, FsError,
+    safe_atomic_write, safe_atomic_write_with_options, write_sidecar_backup,
+    write_sidecar_backup_with_suffix, FsError,
 };
 
 // Phase 1.3: re-export the file watcher public surface at crate root.

@@ -38,7 +38,7 @@ use crate::backup::types::{
     BackupErrorEntry, BackupErrorKind, BackupReport, RestoreErrorEntry, RestoreErrorKind,
     RestoreReport,
 };
-use crate::fs::{safe_atomic_write_with_options, FsError};
+use crate::fs::{safe_atomic_write_with_options, write_sidecar_backup_with_suffix, FsError};
 use crate::index::settings::{read_backup_auto_enabled, write_backup_last_run};
 use crate::index::IndexHandle;
 
@@ -481,9 +481,43 @@ fn restore_component<S: BackupStorage>(
             message: format!("parent does not exist: {}", parent.display()),
         });
     }
-    // The trusted root is the parent dir of the target so the safe
-    // writer permits the write while still rejecting .git / target /
-    // node_modules inside that root.
+    // 4a. Defense in depth: before overwriting, copy the current
+    //     bytes to a timestamped sidecar so the user has a recovery
+    //     path if the local-newer guard somehow let an unwanted
+    //     overwrite slip through (clock skew on a synced drive,
+    //     manually reverted file, etc.). The sidecar is best-effort -
+    //     a failure here is logged but does NOT block the restore,
+    //     because failing the restore would leave the user with no
+    //     way to get their backup back at all. The user can recover
+    //     from the sidecar later by hand.
+    let sidecar_suffix = format!(".aseye-pre-restore-{}.bak", unix_now_secs());
+    match write_sidecar_backup_with_suffix(&path, &sidecar_suffix) {
+        Ok(Some(sidecar)) => {
+            tracing::debug!(
+                ?sidecar,
+                component_id = %entry.component_id,
+                "restore wrote pre-overwrite sidecar"
+            );
+        }
+        Ok(None) => {
+            // Source path didn't exist - no current bytes to back up.
+            // The atomic write below will create it fresh.
+        }
+        Err(err) => {
+            tracing::warn!(
+                ?err,
+                component_id = %entry.component_id,
+                "restore could not write sidecar; proceeding with overwrite"
+            );
+        }
+    }
+
+    // 4b. Atomic write. We allow `outside_home` so the integration
+    //     test's tempdir-rooted scenario succeeds; production callers
+    //     write to paths under HOME because the indexed components
+    //     live there. The trusted root is the parent dir of the
+    //     target so the safe writer permits the write while still
+    //     rejecting .git / target / node_modules inside that root.
     let roots: [&Path; 1] = [parent];
     safe_atomic_write_with_options(
         &path, &plaintext, &roots, /* allow_outside_home: */ true,
@@ -760,6 +794,102 @@ mod tests {
         assert_eq!(r.restored, 1);
         // Dry-run reports what *would* happen but writes nothing.
         assert!(!f.exists(), "dry-run must not have written the file");
+    }
+
+    /// Defense in depth: before overwriting on restore, the current
+    /// bytes land in a timestamped sidecar so the user can recover if
+    /// the restore was wrong. We back up `v1`, mutate the file to
+    /// `v2-locally-edited`, force `encrypted_at` forward so the
+    /// local-newer guard does not skip, then restore. The sidecar
+    /// must contain the pre-restore `v2` bytes.
+    #[test]
+    fn restore_writes_pre_overwrite_sidecar() {
+        let dir = tempdir().expect("tempdir");
+        let storage = LocalDirectoryStorage::at(dir.path().to_path_buf());
+        let kc = InMemoryKeychain::new();
+        let handle = Arc::new(IndexHandle::open_in_memory().expect("open"));
+
+        let f = dir.path().join("original.md");
+        std::fs::write(&f, b"v1").unwrap();
+        seed_component(&handle, "aseye://x/y/z/orig", &f);
+        backup_now_with(Arc::clone(&handle), &storage, &kc, None).expect("backup");
+
+        // Locally edit; force encrypted_at into the future so the
+        // local-newer guard does NOT skip.
+        std::fs::write(&f, b"v2-locally-edited").unwrap();
+        let one_hour_hence = unix_now_secs() + 3600;
+        handle
+            .write(|c| {
+                c.execute(
+                    "UPDATE backup_manifest SET encrypted_at = ?1",
+                    params![one_hour_hence],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let r = restore_now_with(Arc::clone(&handle), &storage, &kc, false).expect("restore");
+        assert_eq!(r.restored, 1, "expected the restore to overwrite");
+        assert!(r.errors.is_empty(), "no errors expected: {:?}", r.errors);
+
+        // The file now holds the backup bytes (v1).
+        assert_eq!(std::fs::read(&f).unwrap(), b"v1");
+
+        // A sidecar with the pre-restore bytes (v2) lives next to it.
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("original.md.aseye-pre-restore-")
+            })
+            .collect();
+        assert_eq!(entries.len(), 1, "exactly one sidecar should exist");
+        let sidecar = &entries[0];
+        assert!(sidecar.file_name().to_string_lossy().ends_with(".bak"));
+        assert_eq!(
+            std::fs::read(sidecar.path()).unwrap(),
+            b"v2-locally-edited",
+            "sidecar must contain the pre-restore bytes",
+        );
+    }
+
+    /// When the source file is absent (e.g. the user manually deleted
+    /// it before restoring), there is nothing to sidecar. The restore
+    /// proceeds and creates the file fresh; no `.aseye-pre-restore-*`
+    /// sidecar is left behind.
+    #[test]
+    fn restore_does_not_create_sidecar_when_source_missing() {
+        let dir = tempdir().expect("tempdir");
+        let storage = LocalDirectoryStorage::at(dir.path().to_path_buf());
+        let kc = InMemoryKeychain::new();
+        let handle = Arc::new(IndexHandle::open_in_memory().expect("open"));
+
+        let f = dir.path().join("ghost.md");
+        std::fs::write(&f, b"original").unwrap();
+        seed_component(&handle, "aseye://x/y/z/ghost", &f);
+        backup_now_with(Arc::clone(&handle), &storage, &kc, None).expect("backup");
+
+        // User wipes the file before restoring.
+        std::fs::remove_file(&f).unwrap();
+
+        let r = restore_now_with(Arc::clone(&handle), &storage, &kc, false).expect("restore");
+        assert_eq!(r.restored, 1);
+        assert_eq!(std::fs::read(&f).unwrap(), b"original");
+
+        // No sidecar should exist since there were no pre-restore
+        // bytes to back up.
+        let sidecar_count = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(".aseye-pre-restore-")
+            })
+            .count();
+        assert_eq!(sidecar_count, 0);
     }
 
     /// FK cascade gives us defense-in-depth: dropping a component

@@ -17,7 +17,7 @@ pub mod atomic;
 pub mod error;
 pub mod safety;
 
-pub use atomic::{atomic_write, write_sidecar_backup};
+pub use atomic::{atomic_write, write_sidecar_backup, write_sidecar_backup_with_suffix};
 pub use error::FsError;
 pub use safety::{
     assert_safe_target, assert_safe_target_with_override, assert_within_root, safe_atomic_write,
