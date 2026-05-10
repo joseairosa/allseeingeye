@@ -30,6 +30,7 @@ import type {
   MemoryAnalysisReport,
   PipelineEvent,
   ProjectSummary,
+  ReorganizeReport,
   RestoreReport,
   VerifyReport,
   SaveOutcome,
@@ -59,6 +60,7 @@ import {
   listSecurityFindings,
   listTools,
   readComponentRaw,
+  reorganizeDocs,
   restoreNow,
   saveComponent,
   search,
@@ -655,6 +657,22 @@ export function useAuditWorktrees(): UseMutationResult<
 > {
   return useMutation({
     mutationFn: (projectPath: string) => auditWorktrees(projectPath),
+  });
+}
+
+/**
+ * Reorganise loose `*.md` files into `<project>/docs/`. `dryRun =
+ * true` returns the plan without writing anything; `false`
+ * performs the moves + rewrites.
+ */
+export function useReorganizeDocs(): UseMutationResult<
+  ReorganizeReport,
+  Error,
+  { projectPath: string; dryRun: boolean }
+> {
+  return useMutation({
+    mutationFn: ({ projectPath, dryRun }) =>
+      reorganizeDocs(projectPath, dryRun),
   });
 }
 

@@ -35,6 +35,7 @@ import type {
   IpcError,
   MemoryAnalysisReport,
   ProjectSummary,
+  ReorganizeReport,
   RestoreReport,
   VerifyReport,
   SaveOutcome,
@@ -64,6 +65,7 @@ export type {
   IpcError,
   MemoryAnalysisReport,
   ProjectSummary,
+  ReorganizeReport,
   RestoreReport,
   VerifyReport,
   SaveOutcome,
@@ -344,6 +346,19 @@ export async function auditWorktrees(
   projectPath: string,
 ): Promise<WorktreeReport> {
   return invoke<WorktreeReport>("audit_worktrees", { projectPath });
+}
+
+/**
+ * Reorganise loose top-level `*.md` files into `<project>/docs/`.
+ * `dryRun = true` returns the plan without writing anything;
+ * `false` performs the moves + link rewrites with pre-reorg
+ * sidecar backups for every source file.
+ */
+export async function reorganizeDocs(
+  projectPath: string,
+  dryRun: boolean,
+): Promise<ReorganizeReport> {
+  return invoke<ReorganizeReport>("reorganize_docs", { projectPath, dryRun });
 }
 
 // ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────

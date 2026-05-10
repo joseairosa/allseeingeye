@@ -94,6 +94,11 @@ export type { MemoryRecommendation } from "../../../apps/desktop/src-tauri/bindi
 export type { MemoryRecommendationKind } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryRecommendationKind";
 export type { WorktreeReport } from "../../../apps/desktop/src-tauri/bindings/projects/WorktreeReport";
 export type { WorktreeEntry } from "../../../apps/desktop/src-tauri/bindings/projects/WorktreeEntry";
+export type { ReorganizeReport } from "../../../apps/desktop/src-tauri/bindings/projects/ReorganizeReport";
+export type { ReorganizeMove } from "../../../apps/desktop/src-tauri/bindings/projects/ReorganizeMove";
+export type { LinkRewrite } from "../../../apps/desktop/src-tauri/bindings/projects/LinkRewrite";
+export type { ReorganizeError } from "../../../apps/desktop/src-tauri/bindings/projects/ReorganizeError";
+export type { ReorganizeErrorKind } from "../../../apps/desktop/src-tauri/bindings/projects/ReorganizeErrorKind";
 
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";

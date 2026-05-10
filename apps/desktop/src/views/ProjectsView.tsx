@@ -15,11 +15,13 @@ import {
   useAnalyzeMemory,
   useAuditWorktrees,
   useProjects,
+  useReorganizeDocs,
 } from "@/ipc/hooks";
 import { formatBytes, formatTokensK } from "@/lib/tokens";
 import type {
   MemoryAnalysisReport,
   ProjectSummary,
+  ReorganizeReport,
   WorktreeReport,
 } from "@aseye/shared-types";
 
@@ -114,6 +116,13 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
   const [wtReport, setWtReport] = useState<WorktreeReport | null>(null);
   const [wtError, setWtError] = useState<string | null>(null);
 
+  const reorg = useReorganizeDocs();
+  const [reorgPreview, setReorgPreview] =
+    useState<ReorganizeReport | null>(null);
+  const [reorgApplied, setReorgApplied] =
+    useState<ReorganizeReport | null>(null);
+  const [reorgError, setReorgError] = useState<string | null>(null);
+
   async function handleAnalyze(): Promise<void> {
     setAnalysisError(null);
     try {
@@ -134,6 +143,34 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
       setWtReport(next);
     } catch (err) {
       setWtError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleReorgPreview(): Promise<void> {
+    setReorgError(null);
+    setReorgApplied(null);
+    try {
+      const next = await reorg.mutateAsync({
+        projectPath: project.projectPath,
+        dryRun: true,
+      });
+      setReorgPreview(next);
+    } catch (err) {
+      setReorgError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleReorgApply(): Promise<void> {
+    setReorgError(null);
+    try {
+      const next = await reorg.mutateAsync({
+        projectPath: project.projectPath,
+        dryRun: false,
+      });
+      setReorgApplied(next);
+      setReorgPreview(null);
+    } catch (err) {
+      setReorgError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -208,11 +245,17 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
         </button>
         <button
           type="button"
-          className="text-button quiet"
-          disabled
-          title="Action lands in 17.D"
+          className="text-button"
+          onClick={() => {
+            void handleReorgPreview();
+          }}
+          disabled={reorg.isPending}
+          aria-busy={reorg.isPending}
+          title="Preview moves of loose .md files into docs/ + link rewrites"
         >
-          Reorganize docs
+          {reorg.isPending && reorgPreview === null
+            ? "Previewing…"
+            : "Reorganize docs"}
         </button>
       </footer>
       {analysisError ? (
@@ -259,8 +302,195 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
       {wtReport ? (
         <WorktreeResult report={wtReport} onClear={() => setWtReport(null)} />
       ) : null}
+      {reorgError ? (
+        <div
+          className="validation-box"
+          role="alert"
+          aria-live="polite"
+          data-toast-kind="error"
+        >
+          <span>!</span>
+          <p>{reorgError}</p>
+          <button
+            type="button"
+            className="text-button quiet"
+            onClick={() => setReorgError(null)}
+            style={{ marginLeft: "auto" }}
+          >
+            dismiss
+          </button>
+        </div>
+      ) : null}
+      {reorgApplied ? (
+        <ReorganizeResult
+          report={reorgApplied}
+          mode="applied"
+          onClear={() => setReorgApplied(null)}
+        />
+      ) : null}
+      {reorgPreview ? (
+        <ReorganizeResult
+          report={reorgPreview}
+          mode="preview"
+          onApply={() => {
+            void handleReorgApply();
+          }}
+          isApplying={reorg.isPending}
+          onClear={() => setReorgPreview(null)}
+        />
+      ) : null}
     </article>
   );
+}
+
+interface ReorganizeResultProps {
+  report: ReorganizeReport;
+  mode: "preview" | "applied";
+  onApply?: () => void;
+  isApplying?: boolean;
+  onClear: () => void;
+}
+
+function ReorganizeResult({
+  report,
+  mode,
+  onApply,
+  isApplying,
+  onClear,
+}: ReorganizeResultProps): ReactElement {
+  const moveCount = report.moves.length;
+  const rewriteCount = report.linkRewrites.length;
+  const errorCount = report.errors.length;
+
+  return (
+    <section
+      className="project-card-analysis"
+      aria-labelledby="reorganize-heading"
+    >
+      <header className="project-card-analysis-header">
+        <strong id="reorganize-heading">
+          {mode === "preview" ? "Reorganise preview" : "Reorganise applied"}
+        </strong>
+        <span>
+          {moveCount} move{moveCount === 1 ? "" : "s"} ·{" "}
+          {rewriteCount} link rewrite{rewriteCount === 1 ? "" : "s"}
+          {errorCount > 0
+            ? ` · ${errorCount} error${errorCount === 1 ? "" : "s"}`
+            : ""}
+          {report.walkIncomplete ? " · walk incomplete" : ""}
+        </span>
+        <button
+          type="button"
+          className="text-button quiet"
+          onClick={onClear}
+          aria-label="dismiss reorganise report"
+        >
+          clear
+        </button>
+      </header>
+
+      {moveCount === 0 && rewriteCount === 0 && errorCount === 0 ? (
+        <p className="settings-todo">
+          No loose top-level <code>.md</code> files to move. Allowlist
+          (README, CLAUDE, AGENTS, GEMINI, CHANGELOG, LICENSE,
+          CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, COMPONENTS) and
+          existing <code>docs/</code> files are skipped.
+        </p>
+      ) : null}
+
+      {moveCount > 0 ? (
+        <details className="project-card-recommendations" open>
+          <summary>
+            <strong>Moves ({moveCount})</strong>
+          </summary>
+          <ul style={{ marginTop: 6 }}>
+            {report.moves.map((m, idx) => (
+              <li key={idx} className="project-card-rec rec-move">
+                <span className="mono">
+                  {fileName(m.from)} → docs/{fileName(m.to)}
+                </span>
+                <p className="settings-todo">
+                  {formatBytes(m.size)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {rewriteCount > 0 ? (
+        <details className="project-card-recommendations">
+          <summary>
+            <strong>Link rewrites ({rewriteCount})</strong>
+          </summary>
+          <ul style={{ marginTop: 6 }}>
+            {report.linkRewrites.slice(0, 50).map((r, idx) => (
+              <li key={idx} className="project-card-rec rec-rewrite">
+                <span className="mono">
+                  {fileName(r.file)}:{Number(r.line)}
+                </span>
+                <p>
+                  <span className="settings-todo">{r.before}</span>
+                  {" → "}
+                  <span>{r.after}</span>
+                </p>
+              </li>
+            ))}
+            {rewriteCount > 50 ? (
+              <li className="settings-todo">
+                +{rewriteCount - 50} more (apply still rewrites all of
+                them)
+              </li>
+            ) : null}
+          </ul>
+        </details>
+      ) : null}
+
+      {errorCount > 0 ? (
+        <details className="project-card-recommendations" open>
+          <summary>
+            <strong>Errors ({errorCount})</strong>
+          </summary>
+          <ul style={{ marginTop: 6 }}>
+            {report.errors.map((e, idx) => (
+              <li key={idx} className="project-card-rec rec-staleReference">
+                <span className="mono">{e.path}</span>
+                <p>
+                  <strong>{String(e.kind)}</strong>: {e.message}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {mode === "preview" && (moveCount > 0 || rewriteCount > 0) ? (
+        <div className="settings-row-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onApply}
+            disabled={isApplying}
+            aria-busy={isApplying}
+          >
+            {isApplying
+              ? "Applying…"
+              : `Apply ${moveCount} move${moveCount === 1 ? "" : "s"} and ${rewriteCount} rewrite${rewriteCount === 1 ? "" : "s"}`}
+          </button>
+          <small className="settings-todo">
+            Pre-reorg sidecars (
+            <code>{"<file>.aseye-pre-reorg-<unix>.bak"}</code>) are
+            written next to each source file before the move.
+          </small>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function fileName(p: string): string {
+  const idx = p.lastIndexOf("/");
+  return idx === -1 ? p : p.slice(idx + 1);
 }
 
 interface WorktreeResultProps {

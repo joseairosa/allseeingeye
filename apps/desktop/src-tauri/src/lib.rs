@@ -373,6 +373,7 @@ pub fn run() {
             ipc::commands::list_projects,
             ipc::commands::analyze_memory,
             ipc::commands::audit_worktrees,
+            ipc::commands::reorganize_docs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

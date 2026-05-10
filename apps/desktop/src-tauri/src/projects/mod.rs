@@ -10,6 +10,7 @@
 
 pub mod analyze_memory;
 pub mod discover;
+pub mod reorganize_docs;
 pub mod types;
 pub mod worktrees;
 
@@ -20,6 +21,11 @@ pub use analyze_memory::{
 };
 #[allow(unused_imports)]
 pub use discover::list_projects;
+#[allow(unused_imports)]
+pub use reorganize_docs::{
+    reorganize_docs, LinkRewrite, OrchestrationError as ReorganizeOrchestrationError,
+    ReorganizeError, ReorganizeErrorKind, ReorganizeMove, ReorganizeReport,
+};
 #[allow(unused_imports)]
 pub use types::{MemoryFileSummary, ProjectSummary};
 #[allow(unused_imports)]

@@ -1595,6 +1595,27 @@ pub fn list_projects(
     crate::projects::list_projects(state.inner().as_ref()).map_err(|e| e.to_string())
 }
 
+/// Reorganise a project's loose top-level `*.md` files into a
+/// `docs/` folder. Excludes README, CLAUDE, AGENTS, GEMINI,
+/// CHANGELOG, LICENSE, CONTRIBUTING, `CODE_OF_CONDUCT`, SECURITY,
+/// COMPONENTS. Rewrites internal markdown links to point at the new
+/// location. `dry_run = true` returns the plan without writing
+/// anything; `false` performs the moves + rewrites with pre-reorg
+/// sidecar backups for every source file.
+#[tauri::command]
+pub async fn reorganize_docs(
+    _state: State<'_, Arc<IndexHandle>>,
+    project_path: String,
+    dry_run: bool,
+) -> Result<crate::projects::ReorganizeReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::projects::reorganize_docs(std::path::Path::new(&project_path), dry_run)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("reorganize_docs task panicked: {e}"))?
+}
+
 /// Audit git worktrees for a project. Read-only: runs
 /// `git worktree list --porcelain`, parses the output, decorates
 /// each entry with mtime + recursive disk usage. Never invokes
