@@ -11,6 +11,7 @@
 pub mod analyze_memory;
 pub mod discover;
 pub mod types;
+pub mod worktrees;
 
 #[allow(unused_imports)]
 pub use analyze_memory::{
@@ -21,3 +22,5 @@ pub use analyze_memory::{
 pub use discover::list_projects;
 #[allow(unused_imports)]
 pub use types::{MemoryFileSummary, ProjectSummary};
+#[allow(unused_imports)]
+pub use worktrees::{audit_worktrees, WorktreeEntry, WorktreeError, WorktreeReport};

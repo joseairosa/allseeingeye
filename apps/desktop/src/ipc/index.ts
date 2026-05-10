@@ -38,6 +38,7 @@ import type {
   RestoreReport,
   VerifyReport,
   SaveOutcome,
+  WorktreeReport,
   ScanReport,
   SearchQuery,
   SearchResult,
@@ -66,6 +67,7 @@ export type {
   RestoreReport,
   VerifyReport,
   SaveOutcome,
+  WorktreeReport,
   ScanReport,
   SearchQuery,
   SearchResult,
@@ -331,6 +333,17 @@ export async function analyzeMemory(
     projectPath,
     memoryPath,
   });
+}
+
+/**
+ * Audit a project's git worktrees. Read-only: parses
+ * `git worktree list --porcelain` and decorates each entry with
+ * mtime + bounded recursive disk usage.
+ */
+export async function auditWorktrees(
+  projectPath: string,
+): Promise<WorktreeReport> {
+  return invoke<WorktreeReport>("audit_worktrees", { projectPath });
 }
 
 // ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────

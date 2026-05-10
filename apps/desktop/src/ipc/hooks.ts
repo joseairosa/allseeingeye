@@ -33,6 +33,7 @@ import type {
   RestoreReport,
   VerifyReport,
   SaveOutcome,
+  WorktreeReport,
   SearchQuery,
   SearchResult,
   SecurityFilter,
@@ -41,6 +42,7 @@ import type {
 } from "@aseye/shared-types";
 import {
   analyzeMemory,
+  auditWorktrees,
   backupNow,
   backupSetAuto,
   backupStatus,
@@ -640,6 +642,19 @@ export function useAnalyzeMemory(): UseMutationResult<
   return useMutation({
     mutationFn: ({ projectPath, memoryPath }) =>
       analyzeMemory(projectPath, memoryPath),
+  });
+}
+
+/**
+ * Audit a project's git worktrees. Read-only.
+ */
+export function useAuditWorktrees(): UseMutationResult<
+  WorktreeReport,
+  Error,
+  string
+> {
+  return useMutation({
+    mutationFn: (projectPath: string) => auditWorktrees(projectPath),
   });
 }
 

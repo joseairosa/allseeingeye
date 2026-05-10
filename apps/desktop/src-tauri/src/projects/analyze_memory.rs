@@ -403,10 +403,7 @@ fn extract_path_tokens(line: &str) -> Vec<String> {
     for token in line.split(|c: char| c.is_whitespace() || c == ',' || c == ';') {
         let cleaned = token
             .trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '.'));
-        if cleaned
-            .chars()
-            .any(|c| matches!(c, '[' | ']' | '(' | ')'))
-        {
+        if cleaned.chars().any(|c| matches!(c, '[' | ']' | '(' | ')')) {
             continue;
         }
         if is_pathlike(cleaned) && cleaned.contains('/') {

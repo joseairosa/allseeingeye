@@ -92,6 +92,8 @@ export type { MemoryFileSummary } from "../../../apps/desktop/src-tauri/bindings
 export type { MemoryAnalysisReport } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryAnalysisReport";
 export type { MemoryRecommendation } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryRecommendation";
 export type { MemoryRecommendationKind } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryRecommendationKind";
+export type { WorktreeReport } from "../../../apps/desktop/src-tauri/bindings/projects/WorktreeReport";
+export type { WorktreeEntry } from "../../../apps/desktop/src-tauri/bindings/projects/WorktreeEntry";
 
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";

@@ -11,11 +11,16 @@
  */
 import { useMemo, useState, type ReactElement } from "react";
 import { useUi } from "@/store/ui";
-import { useAnalyzeMemory, useProjects } from "@/ipc/hooks";
+import {
+  useAnalyzeMemory,
+  useAuditWorktrees,
+  useProjects,
+} from "@/ipc/hooks";
 import { formatBytes, formatTokensK } from "@/lib/tokens";
 import type {
   MemoryAnalysisReport,
   ProjectSummary,
+  WorktreeReport,
 } from "@aseye/shared-types";
 
 export function ProjectsView(): ReactElement {
@@ -105,6 +110,10 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
   const [report, setReport] = useState<MemoryAnalysisReport | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
+  const audit = useAuditWorktrees();
+  const [wtReport, setWtReport] = useState<WorktreeReport | null>(null);
+  const [wtError, setWtError] = useState<string | null>(null);
+
   async function handleAnalyze(): Promise<void> {
     setAnalysisError(null);
     try {
@@ -115,6 +124,16 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
       setReport(next);
     } catch (err) {
       setAnalysisError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleAudit(): Promise<void> {
+    setWtError(null);
+    try {
+      const next = await audit.mutateAsync(project.projectPath);
+      setWtReport(next);
+    } catch (err) {
+      setWtError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -173,15 +192,19 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
         </button>
         <button
           type="button"
-          className="text-button quiet"
-          disabled={!project.hasGit}
+          className="text-button"
+          onClick={() => {
+            void handleAudit();
+          }}
+          disabled={!project.hasGit || audit.isPending}
+          aria-busy={audit.isPending}
           title={
             project.hasGit
-              ? "Action lands in 17.C"
+              ? "Run git worktree list and show disk usage per worktree"
               : "Project has no .git/ directory"
           }
         >
-          Audit worktrees
+          {audit.isPending ? "Auditing…" : "Audit worktrees"}
         </button>
         <button
           type="button"
@@ -214,7 +237,92 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
       {report ? (
         <AnalysisResult report={report} onClear={() => setReport(null)} />
       ) : null}
+      {wtError ? (
+        <div
+          className="validation-box"
+          role="alert"
+          aria-live="polite"
+          data-toast-kind="error"
+        >
+          <span>!</span>
+          <p>{wtError}</p>
+          <button
+            type="button"
+            className="text-button quiet"
+            onClick={() => setWtError(null)}
+            style={{ marginLeft: "auto" }}
+          >
+            dismiss
+          </button>
+        </div>
+      ) : null}
+      {wtReport ? (
+        <WorktreeResult report={wtReport} onClear={() => setWtReport(null)} />
+      ) : null}
     </article>
+  );
+}
+
+interface WorktreeResultProps {
+  report: WorktreeReport;
+  onClear: () => void;
+}
+
+function WorktreeResult({ report, onClear }: WorktreeResultProps): ReactElement {
+  const total = report.worktrees.length;
+  const totalDisk = formatBytes(report.totalDiskUsageBytes);
+  return (
+    <section className="project-card-analysis" aria-labelledby="worktree-heading">
+      <header className="project-card-analysis-header">
+        <strong id="worktree-heading">Worktrees</strong>
+        <span>
+          {total} worktree{total === 1 ? "" : "s"} · {totalDisk} total
+        </span>
+        <button
+          type="button"
+          className="text-button quiet"
+          onClick={onClear}
+          aria-label="dismiss worktree report"
+        >
+          clear
+        </button>
+      </header>
+      {total === 0 ? (
+        <p className="settings-todo">No worktrees reported by git.</p>
+      ) : (
+        <ul className="project-card-recommendations">
+          {report.worktrees.map((wt) => {
+            const ageDays =
+              wt.mtimeUnix > 0
+                ? Math.floor(
+                    (Date.now() / 1000 - Number(wt.mtimeUnix)) / 86_400,
+                  )
+                : null;
+            return (
+              <li key={wt.path} className="project-card-rec rec-worktree">
+                <strong>
+                  {wt.isMain ? "main · " : ""}
+                  {wt.branch ?? "(detached)"}
+                </strong>
+                <p className="mono">{wt.path}</p>
+                <p>
+                  {formatBytes(wt.diskUsageBytes)}
+                  {wt.incomplete ? " (lower bound)" : ""}
+                  {ageDays !== null ? ` · ${ageDays}d old` : ""}
+                  {wt.locked ? " · locked" : ""}
+                  {wt.lockReason ? ` (${wt.lockReason})` : ""}
+                </p>
+                {!wt.isMain ? (
+                  <p className="settings-todo">
+                    To remove: <span className="mono">git worktree remove {wt.path}</span>
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 

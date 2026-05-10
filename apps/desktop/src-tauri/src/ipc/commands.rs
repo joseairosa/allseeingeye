@@ -1595,6 +1595,23 @@ pub fn list_projects(
     crate::projects::list_projects(state.inner().as_ref()).map_err(|e| e.to_string())
 }
 
+/// Audit git worktrees for a project. Read-only: runs
+/// `git worktree list --porcelain`, parses the output, decorates
+/// each entry with mtime + recursive disk usage. Never invokes
+/// `git worktree remove` - the user runs the removal themselves.
+#[tauri::command]
+pub async fn audit_worktrees(
+    _state: State<'_, Arc<IndexHandle>>,
+    project_path: String,
+) -> Result<crate::projects::WorktreeReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::projects::audit_worktrees(std::path::Path::new(&project_path))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("audit_worktrees task panicked: {e}"))?
+}
+
 /// Analyze a project's primary memory file (CLAUDE.md / AGENTS.md /
 /// GEMINI.md). Returns size + token estimate + recommendations
 /// covering: oversized, internal duplicates, duplicates of the
