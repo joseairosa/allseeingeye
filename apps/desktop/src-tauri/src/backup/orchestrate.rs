@@ -36,7 +36,7 @@ use crate::backup::manifest::{
 use crate::backup::storage::{blob_path_for_hash, BackupStorage, LocalDirectoryStorage};
 use crate::backup::types::{
     BackupErrorEntry, BackupErrorKind, BackupReport, RestoreErrorEntry, RestoreErrorKind,
-    RestoreReport,
+    RestoreReport, VerifyErrorEntry, VerifyErrorKind, VerifyReport,
 };
 use crate::fs::{safe_atomic_write_with_options, write_sidecar_backup_with_suffix, FsError};
 use crate::index::settings::{read_backup_auto_enabled, write_backup_last_run};
@@ -265,6 +265,77 @@ pub fn restore_now_with<S: BackupStorage, K: Keychain>(
         errors,
         elapsed_ms,
         dry_run,
+    })
+}
+
+/// Run the backup integrity verify sweep. Walks every manifest row,
+/// re-reads the ciphertext blob, hashes it (compared against
+/// `blob_hash`), decrypts it, and hashes the recovered plaintext
+/// (compared against `plaintext_hash`). Per-entry failures collect
+/// in the report rather than aborting the sweep.
+///
+/// Catches:
+/// * disk-level blob loss (manual rm, drive disconnect)
+/// * bit rot in the ciphertext ([`VerifyErrorKind::BlobHashMismatch`])
+/// * key rotation that left old blobs unrecoverable ([`VerifyErrorKind::Decrypt`])
+/// * manifest drift ([`VerifyErrorKind::PlaintextHashMismatch`])
+///
+/// Read-only with respect to both the storage backend and the
+/// component table; only logs side effects.
+pub fn backup_verify(handle: Arc<IndexHandle>) -> Result<VerifyReport, OrchestrationError> {
+    let storage = LocalDirectoryStorage::at_default_root()?;
+    backup_verify_with(handle, &storage, &SystemKeychain)
+}
+
+/// Test seam for [`backup_verify`].
+pub fn backup_verify_with<S: BackupStorage, K: Keychain>(
+    handle: Arc<IndexHandle>,
+    storage: &S,
+    keychain: &K,
+) -> Result<VerifyReport, OrchestrationError> {
+    let started = Instant::now();
+
+    // Verify needs the private key to drive the decrypt-and-rehash
+    // pass. Fetched once here so the hot loop does not hit the
+    // keychain N times. The bytes do NOT leak out of this function:
+    // the StaticSecret is dropped on function exit.
+    let priv_hex = match keychain.get_private_key_hex() {
+        Ok(hex) => hex,
+        Err(err) => {
+            tracing::warn!(?err, "backup_verify failed to load device private key");
+            return Err(OrchestrationError::Keychain(err));
+        }
+    };
+    let priv_bytes = decode_private_key(&priv_hex)?;
+    let priv_key = StaticSecret::from(priv_bytes);
+
+    // Snapshot the manifest once - same pattern as restore_now_with.
+    let mut entries: Vec<BackupManifestEntry> = Vec::new();
+    for_each_entry(handle.as_ref(), |e| entries.push(e))?;
+    let total = u32::try_from(entries.len()).unwrap_or(u32::MAX);
+    let mut verified = 0u32;
+    let mut errors: Vec<VerifyErrorEntry> = Vec::new();
+
+    for entry in entries {
+        match verify_component(storage, &priv_key, &entry) {
+            Ok(()) => {
+                verified = verified.saturating_add(1);
+            }
+            Err(err) => {
+                tracing::warn!(component_id = ?entry.component_id, ?err, "verify failed for component");
+                errors.push(err);
+            }
+        }
+    }
+
+    drop(priv_key);
+
+    let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    Ok(VerifyReport {
+        total,
+        verified,
+        errors,
+        elapsed_ms,
     })
 }
 
@@ -529,6 +600,63 @@ fn restore_component<S: BackupStorage>(
     })?;
 
     Ok(RestoreOutcome::Restored)
+}
+
+/// Per-component step for `backup_verify`. Pure read path against
+/// storage + the held private key. No side effects beyond logging.
+fn verify_component<S: BackupStorage>(
+    storage: &S,
+    priv_key: &StaticSecret,
+    entry: &BackupManifestEntry,
+) -> Result<(), VerifyErrorEntry> {
+    // 1. Read the blob bytes back from storage.
+    let blob = storage
+        .get_blob(&entry.blob_path)
+        .map_err(|e| VerifyErrorEntry {
+            component_id: entry.component_id.clone(),
+            kind: VerifyErrorKind::Read,
+            message: format!("storage get: {e}"),
+        })?;
+
+    // 2. Hash the ciphertext and compare against the manifest. This
+    //    short-circuits before we run the AES-GCM decrypt; bit rot
+    //    that flipped a single byte will be caught here cheaply.
+    let blob_hash = sha256_hex(&blob);
+    if blob_hash != entry.blob_hash {
+        return Err(VerifyErrorEntry {
+            component_id: entry.component_id.clone(),
+            kind: VerifyErrorKind::BlobHashMismatch,
+            message: format!("expected blob_hash {} got {}", entry.blob_hash, blob_hash),
+        });
+    }
+
+    // 3. Decrypt. AES-GCM's auth tag means an invalid ciphertext or a
+    //    wrong key surfaces as a Decrypt error; the BlobHashMismatch
+    //    above already handles the corruption case in a more useful
+    //    way (the user knows which way the inconsistency points).
+    let plaintext = decrypt_blob(priv_key, &blob).map_err(|e| VerifyErrorEntry {
+        component_id: entry.component_id.clone(),
+        kind: VerifyErrorKind::Decrypt,
+        message: format!("decrypt: {e}"),
+    })?;
+
+    // 4. Hash the recovered plaintext and compare against the
+    //    manifest. Should never trigger unless the manifest row was
+    //    hand-edited - the AES-GCM tag already protects content
+    //    integrity end-to-end. Defensive check kept for completeness.
+    let plaintext_hash = sha256_hex(&plaintext);
+    if plaintext_hash != entry.plaintext_hash {
+        return Err(VerifyErrorEntry {
+            component_id: entry.component_id.clone(),
+            kind: VerifyErrorKind::PlaintextHashMismatch,
+            message: format!(
+                "expected plaintext_hash {} got {}",
+                entry.plaintext_hash, plaintext_hash
+            ),
+        });
+    }
+
+    Ok(())
 }
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -890,6 +1018,126 @@ mod tests {
             })
             .count();
         assert_eq!(sidecar_count, 0);
+    }
+
+    /// Backup integrity verify: clean state, every entry should
+    /// pass both the ciphertext-hash and plaintext-hash checks.
+    #[test]
+    fn verify_clean_backup_reports_all_verified() {
+        let dir = tempdir().expect("tempdir");
+        let storage = LocalDirectoryStorage::at(dir.path().to_path_buf());
+        let kc = InMemoryKeychain::new();
+        let handle = Arc::new(IndexHandle::open_in_memory().expect("open"));
+
+        for (id, body) in [
+            ("aseye://x/y/z/a", "alpha bytes"),
+            ("aseye://x/y/z/b", "bravo bytes"),
+            ("aseye://x/y/z/c", "charlie bytes"),
+        ] {
+            let f = dir.path().join(format!("{}.md", id.replace('/', "_")));
+            std::fs::write(&f, body).unwrap();
+            seed_component(&handle, id, &f);
+        }
+        backup_now_with(Arc::clone(&handle), &storage, &kc, None).expect("backup");
+
+        let r = backup_verify_with(Arc::clone(&handle), &storage, &kc).expect("verify");
+        assert_eq!(r.total, 3);
+        assert_eq!(r.verified, 3);
+        assert!(r.errors.is_empty(), "no errors expected: {:?}", r.errors);
+    }
+
+    /// Tamper detection: flip one byte in a stored blob, verify
+    /// must surface a `BlobHashMismatch` (the cheap pre-decrypt check
+    /// catches it).
+    #[test]
+    fn verify_detects_tampered_blob() {
+        let dir = tempdir().expect("tempdir");
+        let storage = LocalDirectoryStorage::at(dir.path().to_path_buf());
+        let kc = InMemoryKeychain::new();
+        let handle = Arc::new(IndexHandle::open_in_memory().expect("open"));
+
+        let f = dir.path().join("tamper.md");
+        std::fs::write(&f, b"untouched").unwrap();
+        seed_component(&handle, "aseye://x/y/z/tamper", &f);
+        backup_now_with(Arc::clone(&handle), &storage, &kc, None).expect("backup");
+
+        // Find the blob file under blobs/<2-hex>/<rest>.bin and
+        // flip one byte in the ciphertext region (well past the
+        // 8-byte magic + version header).
+        let blob_dir = dir.path().join("blobs");
+        let bp = std::fs::read_dir(&blob_dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .find_map(|two_hex| {
+                std::fs::read_dir(&two_hex)
+                    .ok()?
+                    .filter_map(std::result::Result::ok)
+                    .map(|e| e.path())
+                    .next()
+            })
+            .expect("blob exists on disk");
+        let mut bytes = std::fs::read(&bp).unwrap();
+        // Flip a byte deep into the ciphertext payload (offset 120
+        // is past header + wrapped DEK + tag + nonce; well into the
+        // AES-GCM ciphertext for any plaintext at least one byte).
+        let target = 120.min(bytes.len() - 1);
+        bytes[target] ^= 0xff;
+        std::fs::write(&bp, &bytes).unwrap();
+
+        let r = backup_verify_with(Arc::clone(&handle), &storage, &kc).expect("verify");
+        assert_eq!(r.total, 1);
+        assert_eq!(r.verified, 0);
+        assert_eq!(r.errors.len(), 1);
+        assert!(matches!(
+            r.errors[0].kind,
+            VerifyErrorKind::BlobHashMismatch
+        ));
+    }
+
+    /// Missing blob: backup writes a blob, then we manually wipe it
+    /// from storage. Verify surfaces a Read error - the manifest
+    /// points at something the backend can no longer produce.
+    #[test]
+    fn verify_detects_missing_blob() {
+        let dir = tempdir().expect("tempdir");
+        let storage = LocalDirectoryStorage::at(dir.path().to_path_buf());
+        let kc = InMemoryKeychain::new();
+        let handle = Arc::new(IndexHandle::open_in_memory().expect("open"));
+
+        let f = dir.path().join("vanish.md");
+        std::fs::write(&f, b"goodbye").unwrap();
+        seed_component(&handle, "aseye://x/y/z/vanish", &f);
+        backup_now_with(Arc::clone(&handle), &storage, &kc, None).expect("backup");
+
+        // Wipe the blob directory; the manifest still points at the
+        // (now missing) blob.
+        let blob_dir = dir.path().join("blobs");
+        std::fs::remove_dir_all(&blob_dir).unwrap();
+
+        let r = backup_verify_with(Arc::clone(&handle), &storage, &kc).expect("verify");
+        assert_eq!(r.total, 1);
+        assert_eq!(r.verified, 0);
+        assert_eq!(r.errors.len(), 1);
+        assert!(matches!(r.errors[0].kind, VerifyErrorKind::Read));
+    }
+
+    /// Empty manifest: verify reports total=0 with no work done.
+    #[test]
+    fn verify_empty_manifest_is_a_noop() {
+        let dir = tempdir().expect("tempdir");
+        let storage = LocalDirectoryStorage::at(dir.path().to_path_buf());
+        let kc = InMemoryKeychain::new();
+        let handle = Arc::new(IndexHandle::open_in_memory().expect("open"));
+
+        // Generate a keypair so verify can fetch the private key.
+        // Without this the in-memory keychain has nothing to return.
+        let _public = ensure_keypair_with(handle.as_ref(), &kc).expect("keypair");
+
+        let r = backup_verify_with(Arc::clone(&handle), &storage, &kc).expect("verify");
+        assert_eq!(r.total, 0);
+        assert_eq!(r.verified, 0);
+        assert!(r.errors.is_empty());
     }
 
     /// FK cascade gives us defense-in-depth: dropping a component

@@ -116,3 +116,64 @@ pub enum RestoreErrorKind {
     /// project root that no longer exists).
     PathUnreachable,
 }
+
+/// Outcome of a `backup_verify` sweep. Walks every manifest row,
+/// re-reads the blob, hashes the ciphertext (compared against
+/// `blob_hash`), decrypts it, and hashes the plaintext (compared
+/// against `plaintext_hash`). Any mismatch surfaces as an error
+/// entry but does not abort the pass.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/backup/VerifyReport.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct VerifyReport {
+    /// Total entries in the manifest considered.
+    pub total: u32,
+    /// Entries that passed both the ciphertext-hash and plaintext-hash
+    /// checks - the all-clear count.
+    pub verified: u32,
+    /// Per-entry failures. Each carries enough context for the UI to
+    /// surface row-level detail without a follow-up IPC call.
+    pub errors: Vec<VerifyErrorEntry>,
+    /// Wall-clock duration of the pass in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// One row in `VerifyReport.errors`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/backup/VerifyErrorEntry.ts")]
+#[ts(rename_all = "camelCase")]
+pub struct VerifyErrorEntry {
+    pub component_id: String,
+    pub kind: VerifyErrorKind,
+    pub message: String,
+}
+
+/// Coarse category for a verify-pass per-entry failure.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../bindings/backup/VerifyErrorKind.ts")]
+#[ts(rename_all = "camelCase")]
+pub enum VerifyErrorKind {
+    /// Reading the encrypted blob from storage failed - blob is
+    /// missing on disk despite being in the manifest. Indicates a
+    /// disk-level loss (manual rm, drive disconnect) or a partial
+    /// restore that left the manifest pointing at a vanished blob.
+    Read,
+    /// SHA-256 of the ciphertext does not match `blob_hash` recorded
+    /// at backup time. Indicates bit rot, corruption, or a
+    /// manifest/storage drift.
+    BlobHashMismatch,
+    /// Decryption (auth-tag mismatch, malformed header, version
+    /// rejection, wrong key) failed. The blob exists but cannot be
+    /// recovered with the current device key.
+    Decrypt,
+    /// Decryption succeeded but SHA-256 of the recovered plaintext
+    /// does not match `plaintext_hash` recorded at backup time. Means
+    /// the manifest is internally inconsistent; should never happen
+    /// unless the manifest row was hand-edited.
+    PlaintextHashMismatch,
+    /// Could not access the keychain (e.g. Linux without libsecret).
+    KeychainUnavailable,
+}

@@ -60,12 +60,12 @@ pub use manifest::{
 };
 #[allow(unused_imports)]
 pub use orchestrate::{
-    backup_now, backup_status, restore_now, BackupStatusReport, OrchestrationError,
+    backup_now, backup_status, backup_verify, restore_now, BackupStatusReport, OrchestrationError,
 };
 #[allow(unused_imports)]
 pub use storage::{BackupStorage, LocalDirectoryStorage, StorageError};
 #[allow(unused_imports)]
 pub use types::{
     BackupErrorEntry, BackupErrorKind, BackupReport, RestoreErrorEntry, RestoreErrorKind,
-    RestoreReport,
+    RestoreReport, VerifyErrorEntry, VerifyErrorKind, VerifyReport,
 };

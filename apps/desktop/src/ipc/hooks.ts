@@ -29,6 +29,7 @@ import type {
   HealthSummary,
   PipelineEvent,
   RestoreReport,
+  VerifyReport,
   SaveOutcome,
   SearchQuery,
   SearchResult,
@@ -40,6 +41,7 @@ import {
   backupNow,
   backupSetAuto,
   backupStatus,
+  backupVerify,
   getComponent,
   getComponentWithRaw,
   getExcludedToolIds,
@@ -590,6 +592,17 @@ export function useBackupSetAuto(): UseMutationResult<void, Error, boolean> {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.backup });
     },
+  });
+}
+
+/**
+ * Run the backup integrity verify sweep. Read-only with respect to
+ * both storage and the component table - no invalidations needed
+ * because nothing changed; the report is consumed in-place.
+ */
+export function useBackupVerify(): UseMutationResult<VerifyReport, Error, void> {
+  return useMutation({
+    mutationFn: () => backupVerify(),
   });
 }
 

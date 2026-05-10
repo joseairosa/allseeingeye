@@ -82,6 +82,9 @@ export type { BackupStatusReport } from "../../../apps/desktop/src-tauri/binding
 export type { RestoreReport } from "../../../apps/desktop/src-tauri/bindings/backup/RestoreReport";
 export type { RestoreErrorEntry } from "../../../apps/desktop/src-tauri/bindings/backup/RestoreErrorEntry";
 export type { RestoreErrorKind } from "../../../apps/desktop/src-tauri/bindings/backup/RestoreErrorKind";
+export type { VerifyReport } from "../../../apps/desktop/src-tauri/bindings/backup/VerifyReport";
+export type { VerifyErrorEntry } from "../../../apps/desktop/src-tauri/bindings/backup/VerifyErrorEntry";
+export type { VerifyErrorKind } from "../../../apps/desktop/src-tauri/bindings/backup/VerifyErrorKind";
 
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";

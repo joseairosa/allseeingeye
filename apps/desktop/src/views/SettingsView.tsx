@@ -13,6 +13,7 @@ import {
   useBackupNow,
   useBackupSetAuto,
   useBackupStatus,
+  useBackupVerify,
   useExcludedToolIds,
   useHealthSummary,
   useProjectMemoryRoots,
@@ -563,6 +564,7 @@ function BackupPane() {
   const status = useBackupStatus();
   const backupNowMut = useBackupNow();
   const restoreNowMut = useRestoreNow();
+  const verifyMut = useBackupVerify();
   const setAutoMut = useBackupSetAuto();
 
   type Toast =
@@ -575,6 +577,16 @@ function BackupPane() {
     restored: number;
     skippedLocalNewer: number;
     errors: number;
+    elapsedMs: bigint;
+  } | null>(null);
+  const [lastVerify, setLastVerify] = useState<{
+    total: number;
+    verified: number;
+    errors: ReadonlyArray<{
+      componentId: string;
+      kind: string;
+      message: string;
+    }>;
     elapsedMs: bigint;
   } | null>(null);
 
@@ -672,9 +684,39 @@ function BackupPane() {
     });
   }
 
+  async function handleVerify(): Promise<void> {
+    setToast(null);
+    try {
+      const report = await verifyMut.mutateAsync();
+      setLastVerify({
+        total: report.total,
+        verified: report.verified,
+        errors: report.errors.map((e) => ({
+          componentId: e.componentId,
+          kind: String(e.kind),
+          message: e.message,
+        })),
+        elapsedMs: report.elapsedMs,
+      });
+      const errs = report.errors.length;
+      if (errs > 0) {
+        pushError(
+          `Verified ${report.verified} of ${report.total}; ${errs} integrity issue${errs === 1 ? "" : "s"} found`,
+        );
+      } else {
+        pushSuccess(
+          `Verified ${report.verified} of ${report.total} in ${report.elapsedMs}ms; all integrity checks passed`,
+        );
+      }
+    } catch (err) {
+      pushError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const data = status.data;
   const ipcBusy =
     backupNowMut.isPending ||
+    verifyMut.isPending ||
     restoreNowMut.isPending ||
     setAutoMut.isPending ||
     status.isFetching;
@@ -784,6 +826,22 @@ function BackupPane() {
           </button>
           <button
             type="button"
+            className="text-button"
+            onClick={() => {
+              void handleVerify();
+            }}
+            disabled={ipcBusy || (data?.manifestCount ?? 0) === 0}
+            title={
+              (data?.manifestCount ?? 0) === 0
+                ? "No backups yet to verify"
+                : "Re-read every blob and check ciphertext + plaintext hashes"
+            }
+            aria-busy={verifyMut.isPending}
+          >
+            {verifyMut.isPending ? "Verifying…" : "Verify integrity"}
+          </button>
+          <button
+            type="button"
             className="text-button quiet"
             onClick={() => setRestoreConfirmOpen(true)}
             disabled={ipcBusy || (data?.manifestCount ?? 0) === 0}
@@ -792,6 +850,50 @@ function BackupPane() {
           </button>
         </div>
       </div>
+
+      {lastVerify !== null ? (
+        <div className="settings-row settings-row-stacked">
+          <div className="settings-row-label">
+            <strong>Integrity check</strong>
+            <small>
+              Verified <strong>{lastVerify.verified}</strong> of{" "}
+              <strong>{lastVerify.total}</strong> blobs in{" "}
+              {String(lastVerify.elapsedMs)}ms.
+              {lastVerify.errors.length > 0
+                ? ` ${lastVerify.errors.length} integrity issue${lastVerify.errors.length === 1 ? "" : "s"} found.`
+                : " All ciphertext + plaintext hashes match."}
+            </small>
+            {lastVerify.errors.length > 0 ? (
+              <details className="settings-todo">
+                <summary>
+                  Show {lastVerify.errors.length} issue
+                  {lastVerify.errors.length === 1 ? "" : "s"}
+                </summary>
+                <ul style={{ marginTop: 6 }}>
+                  {lastVerify.errors.map((err) => (
+                    <li key={err.componentId}>
+                      <span className="mono">{err.componentId}</span>
+                      {" - "}
+                      <strong>{err.kind}</strong>
+                      {": "}
+                      {err.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+          <div className="settings-row-actions">
+            <button
+              type="button"
+              className="text-button quiet"
+              onClick={() => setLastVerify(null)}
+            >
+              clear report
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {lastDryRun !== null ? (
         <div className="settings-row settings-row-stacked">

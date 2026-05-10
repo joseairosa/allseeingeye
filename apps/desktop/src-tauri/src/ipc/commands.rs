@@ -1585,6 +1585,24 @@ pub fn backup_set_auto(state: State<'_, Arc<IndexHandle>>, enabled: bool) -> Res
         .map_err(|e| e.to_string())
 }
 
+/// Run the backup integrity verify sweep. Walks every manifest row,
+/// re-reads the ciphertext blob, hashes it, decrypts it, hashes the
+/// recovered plaintext, and compares against the manifest. Catches
+/// bit rot, accidental file moves outside the app, key rotation that
+/// orphaned old blobs, and manifest drift. Read-only with respect
+/// to both storage and the component table.
+#[tauri::command]
+pub async fn backup_verify(
+    state: State<'_, Arc<IndexHandle>>,
+) -> Result<crate::backup::VerifyReport, String> {
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::backup::backup_verify(index).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("backup_verify task panicked: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

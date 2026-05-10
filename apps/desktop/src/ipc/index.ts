@@ -34,6 +34,7 @@ import type {
   HealthSummary,
   IpcError,
   RestoreReport,
+  VerifyReport,
   SaveOutcome,
   ScanReport,
   SearchQuery,
@@ -59,6 +60,7 @@ export type {
   HealthSummary,
   IpcError,
   RestoreReport,
+  VerifyReport,
   SaveOutcome,
   ScanReport,
   SearchQuery,
@@ -289,6 +291,16 @@ export async function backupStatus(): Promise<BackupStatusReport> {
 /** Toggle the auto-after-edit backup behaviour. */
 export async function backupSetAuto(enabled: boolean): Promise<void> {
   return invoke<void>("backup_set_auto", { enabled });
+}
+
+/**
+ * Run the backup integrity verify sweep. Walks every manifest row,
+ * re-reads the blob, hashes it, decrypts it, hashes the recovered
+ * plaintext, and compares against the manifest. Catches bit rot,
+ * key rotation, missing blobs, manifest drift. Read-only.
+ */
+export async function backupVerify(): Promise<VerifyReport> {
+  return invoke<VerifyReport>("backup_verify");
 }
 
 // ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────

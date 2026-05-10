@@ -367,6 +367,7 @@ pub fn run() {
             ipc::commands::restore_now,
             ipc::commands::backup_status,
             ipc::commands::backup_set_auto,
+            ipc::commands::backup_verify,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
