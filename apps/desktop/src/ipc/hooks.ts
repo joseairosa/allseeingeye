@@ -27,6 +27,7 @@ import type {
   DetectedTool,
   FindingSummary,
   HealthSummary,
+  MemoryAnalysisReport,
   PipelineEvent,
   ProjectSummary,
   RestoreReport,
@@ -39,6 +40,7 @@ import type {
   ToolId,
 } from "@aseye/shared-types";
 import {
+  analyzeMemory,
   backupNow,
   backupSetAuto,
   backupStatus,
@@ -622,6 +624,22 @@ export function useProjects(): UseQueryResult<ProjectSummary[], Error> {
     queryKey: QUERY_KEYS.projects,
     queryFn: listProjects,
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Analyze a project's primary memory file. Read-only: no
+ * invalidations needed because nothing changed; the report is
+ * consumed in-place by the result panel.
+ */
+export function useAnalyzeMemory(): UseMutationResult<
+  MemoryAnalysisReport,
+  Error,
+  { projectPath: string; memoryPath: string }
+> {
+  return useMutation({
+    mutationFn: ({ projectPath, memoryPath }) =>
+      analyzeMemory(projectPath, memoryPath),
   });
 }
 

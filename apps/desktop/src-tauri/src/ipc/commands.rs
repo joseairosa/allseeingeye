@@ -1595,6 +1595,27 @@ pub fn list_projects(
     crate::projects::list_projects(state.inner().as_ref()).map_err(|e| e.to_string())
 }
 
+/// Analyze a project's primary memory file (CLAUDE.md / AGENTS.md /
+/// GEMINI.md). Returns size + token estimate + recommendations
+/// covering: oversized, internal duplicates, duplicates of the
+/// global ~/.claude/CLAUDE.md, and stale file references. Read-only.
+#[tauri::command]
+pub async fn analyze_memory(
+    state: State<'_, Arc<IndexHandle>>,
+    project_path: String,
+    memory_path: String,
+) -> Result<crate::projects::MemoryAnalysisReport, String> {
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = std::path::PathBuf::from(project_path);
+        let memory = std::path::PathBuf::from(memory_path);
+        crate::projects::analyze_memory(index.as_ref(), &project, &memory)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("analyze_memory task panicked: {e}"))?
+}
+
 /// Run the backup integrity verify sweep. Walks every manifest row,
 /// re-reads the ciphertext blob, hashes it, decrypts it, hashes the
 /// recovered plaintext, and compares against the manifest. Catches

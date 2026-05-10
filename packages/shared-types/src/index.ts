@@ -89,6 +89,9 @@ export type { VerifyErrorKind } from "../../../apps/desktop/src-tauri/bindings/b
 // Phase 17: projects view + actions wire types.
 export type { ProjectSummary } from "../../../apps/desktop/src-tauri/bindings/projects/ProjectSummary";
 export type { MemoryFileSummary } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryFileSummary";
+export type { MemoryAnalysisReport } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryAnalysisReport";
+export type { MemoryRecommendation } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryRecommendation";
+export type { MemoryRecommendationKind } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryRecommendationKind";
 
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";

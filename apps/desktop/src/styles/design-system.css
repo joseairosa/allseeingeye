@@ -2592,6 +2592,73 @@ body.reduced-motion .cost-bar-fill { transition: none; }
   color: var(--text-secondary);
 }
 
+.project-card-analysis {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+}
+
+.project-card-analysis-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.project-card-analysis-header strong {
+  color: var(--text-primary);
+}
+
+.project-card-analysis-header > span {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.project-card-recommendations {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.project-card-rec {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border-subtle);
+  background: var(--bg-elev-1);
+  border-radius: 4px;
+}
+
+.project-card-rec strong {
+  color: var(--text-primary);
+}
+
+.project-card-rec p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.project-card-rec.rec-oversized {
+  border-left-color: var(--warn);
+}
+.project-card-rec.rec-duplicateOfGlobal,
+.project-card-rec.rec-internalDuplicate {
+  border-left-color: var(--accent-3);
+}
+.project-card-rec.rec-staleReference {
+  border-left-color: var(--error);
+}
+.project-card-rec.rec-unknownFrontmatterField {
+  border-left-color: var(--accent-2);
+}
+
 /* Security view header pill with embedded count. */
 .security-pill {
   display: inline-flex;

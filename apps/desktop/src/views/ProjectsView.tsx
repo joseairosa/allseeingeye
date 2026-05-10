@@ -9,11 +9,14 @@
  * worktrees / Reorganize docs) ship in 17.B / 17.C / 17.D and are
  * placeholders for now.
  */
-import { useMemo, type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { useUi } from "@/store/ui";
-import { useProjects } from "@/ipc/hooks";
+import { useAnalyzeMemory, useProjects } from "@/ipc/hooks";
 import { formatBytes, formatTokensK } from "@/lib/tokens";
-import type { ProjectSummary } from "@aseye/shared-types";
+import type {
+  MemoryAnalysisReport,
+  ProjectSummary,
+} from "@aseye/shared-types";
 
 export function ProjectsView(): ReactElement {
   const view = useUi((s) => s.view);
@@ -98,6 +101,23 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
     project.memoryFiles[0]?.basename ?? "(memory file)";
   const otherCount = project.memoryFiles.length - 1;
 
+  const analyze = useAnalyzeMemory();
+  const [report, setReport] = useState<MemoryAnalysisReport | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  async function handleAnalyze(): Promise<void> {
+    setAnalysisError(null);
+    try {
+      const next = await analyze.mutateAsync({
+        projectPath: project.projectPath,
+        memoryPath: project.primaryMemoryPath,
+      });
+      setReport(next);
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <article
       className={`project-card${project.isOversized ? " oversized" : ""}`}
@@ -142,11 +162,14 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
       <footer className="project-card-actions">
         <button
           type="button"
-          className="text-button quiet"
-          disabled
-          title="Action lands in 17.B"
+          className="text-button"
+          onClick={() => {
+            void handleAnalyze();
+          }}
+          disabled={analyze.isPending}
+          aria-busy={analyze.isPending}
         >
-          Analyze CLAUDE.md
+          {analyze.isPending ? "Analyzing…" : `Analyze ${primaryBasename}`}
         </button>
         <button
           type="button"
@@ -169,6 +192,100 @@ function ProjectCard({ project }: ProjectCardProps): ReactElement {
           Reorganize docs
         </button>
       </footer>
+      {analysisError ? (
+        <div
+          className="validation-box"
+          role="alert"
+          aria-live="polite"
+          data-toast-kind="error"
+        >
+          <span>!</span>
+          <p>{analysisError}</p>
+          <button
+            type="button"
+            className="text-button quiet"
+            onClick={() => setAnalysisError(null)}
+            style={{ marginLeft: "auto" }}
+          >
+            dismiss
+          </button>
+        </div>
+      ) : null}
+      {report ? (
+        <AnalysisResult report={report} onClear={() => setReport(null)} />
+      ) : null}
     </article>
   );
+}
+
+interface AnalysisResultProps {
+  report: MemoryAnalysisReport;
+  onClear: () => void;
+}
+
+function AnalysisResult({ report, onClear }: AnalysisResultProps): ReactElement {
+  const recCount = report.recommendations.length;
+  return (
+    <section className="project-card-analysis" aria-labelledby="analysis-heading">
+      <header className="project-card-analysis-header">
+        <strong id="analysis-heading">Analysis</strong>
+        <span>
+          {formatBytes(report.sizeBytes)} · ~
+          {formatTokensK(Number(report.tokensEst))} tok ·{" "}
+          {recCount === 0
+            ? "no issues found"
+            : `${recCount} suggestion${recCount === 1 ? "" : "s"}`}
+        </span>
+        <button
+          type="button"
+          className="text-button quiet"
+          onClick={onClear}
+          aria-label="dismiss analysis"
+        >
+          clear
+        </button>
+      </header>
+      {recCount === 0 ? (
+        <p className="settings-todo">
+          No optimization opportunities flagged. The file is within the
+          8 KB / ~2k token threshold and has no internal duplicates,
+          duplicates of your global CLAUDE.md, or stale references.
+        </p>
+      ) : (
+        <ul className="project-card-recommendations">
+          {report.recommendations.map((rec, idx) => (
+            <li key={idx} className={`project-card-rec rec-${rec.kind}`}>
+              <strong>{recommendationLabel(rec.kind)}</strong>
+              {rec.lineRange ? (
+                <span className="settings-todo">
+                  {" "}line {Number(rec.lineRange[0])}
+                  {Number(rec.lineRange[0]) !== Number(rec.lineRange[1])
+                    ? `–${Number(rec.lineRange[1])}`
+                    : ""}
+                </span>
+              ) : null}
+              <p>{rec.message}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function recommendationLabel(kind: string): string {
+  switch (kind) {
+    case "oversized":
+      return "Oversized";
+    case "duplicateOfGlobal":
+      return "Duplicate of global CLAUDE.md";
+    case "internalDuplicate":
+      return "Internal duplicate";
+    case "unknownFrontmatterField":
+      return "Unknown frontmatter field";
+    case "staleReference":
+      return "Stale reference";
+    default:
+      return kind;
+  }
 }

@@ -33,6 +33,7 @@ import type {
   FindingSummary,
   HealthSummary,
   IpcError,
+  MemoryAnalysisReport,
   ProjectSummary,
   RestoreReport,
   VerifyReport,
@@ -60,6 +61,7 @@ export type {
   FindingSummary,
   HealthSummary,
   IpcError,
+  MemoryAnalysisReport,
   ProjectSummary,
   RestoreReport,
   VerifyReport,
@@ -314,6 +316,21 @@ export async function backupVerify(): Promise<VerifyReport> {
  */
 export async function listProjects(): Promise<ProjectSummary[]> {
   return invoke<ProjectSummary[]>("list_projects");
+}
+
+/**
+ * Analyze a project's primary memory file. Returns size + token
+ * estimate + recommendations (oversized / internal duplicate /
+ * duplicate-of-global / stale references). Read-only.
+ */
+export async function analyzeMemory(
+  projectPath: string,
+  memoryPath: string,
+): Promise<MemoryAnalysisReport> {
+  return invoke<MemoryAnalysisReport>("analyze_memory", {
+    projectPath,
+    memoryPath,
+  });
 }
 
 // ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────

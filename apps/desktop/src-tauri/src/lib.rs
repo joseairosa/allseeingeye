@@ -371,6 +371,7 @@ pub fn run() {
             ipc::commands::backup_verify,
             // Phase 17 - projects view.
             ipc::commands::list_projects,
+            ipc::commands::analyze_memory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
