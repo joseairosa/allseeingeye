@@ -8,6 +8,7 @@ export type ViewId =
   | "health"
   | "cost"
   | "security"
+  | "projects"
   | "settings";
 export type Density = "comfortable" | "compact";
 /**

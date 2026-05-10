@@ -33,6 +33,7 @@ import type {
   FindingSummary,
   HealthSummary,
   IpcError,
+  ProjectSummary,
   RestoreReport,
   VerifyReport,
   SaveOutcome,
@@ -59,6 +60,7 @@ export type {
   FindingSummary,
   HealthSummary,
   IpcError,
+  ProjectSummary,
   RestoreReport,
   VerifyReport,
   SaveOutcome,
@@ -301,6 +303,17 @@ export async function backupSetAuto(enabled: boolean): Promise<void> {
  */
 export async function backupVerify(): Promise<VerifyReport> {
   return invoke<VerifyReport>("backup_verify");
+}
+
+// ─── Phase 17 - projects view ─────────────────────────────────────────
+
+/**
+ * List every project surfaced by the index. A project IS the parent
+ * directory of any indexed memory file (CLAUDE.md / AGENTS.md /
+ * GEMINI.md). Sorted by display name ascending. Read-only.
+ */
+export async function listProjects(): Promise<ProjectSummary[]> {
+  return invoke<ProjectSummary[]>("list_projects");
 }
 
 // ─── Audit follow-ups - Settings + Onboarding wiring ──────────────────

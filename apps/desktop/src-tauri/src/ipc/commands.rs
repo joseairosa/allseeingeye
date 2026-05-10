@@ -1585,6 +1585,16 @@ pub fn backup_set_auto(state: State<'_, Arc<IndexHandle>>, enabled: bool) -> Res
         .map_err(|e| e.to_string())
 }
 
+/// List every project surfaced by the index. A project IS the parent
+/// directory of any indexed memory file (CLAUDE.md / AGENTS.md /
+/// GEMINI.md). Read-only.
+#[tauri::command]
+pub fn list_projects(
+    state: State<'_, Arc<IndexHandle>>,
+) -> Result<Vec<crate::projects::ProjectSummary>, String> {
+    crate::projects::list_projects(state.inner().as_ref()).map_err(|e| e.to_string())
+}
+
 /// Run the backup integrity verify sweep. Walks every manifest row,
 /// re-reads the ciphertext blob, hashes it, decrypts it, hashes the
 /// recovered plaintext, and compares against the manifest. Catches

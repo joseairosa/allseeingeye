@@ -8,6 +8,7 @@ import {
   NavHealthIcon,
   NavInventoryIcon,
   NavMapIcon,
+  NavProjectsIcon,
   TypeIcon,
   type TypeIconId,
 } from "./icons";
@@ -288,6 +289,7 @@ export function Sidebar() {
         <NavButton view="editor" label="Editor" icon={<NavEditorIcon />} />
         <NavButton view="health" label="Health" icon={<NavHealthIcon />} />
         <NavButton view="cost" label="Cost" icon={<NavCostIcon />} />
+        <NavButton view="projects" label="Projects" icon={<NavProjectsIcon />} />
       </nav>
 
       <div className="sidebar-scroll">

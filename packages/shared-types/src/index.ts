@@ -86,6 +86,10 @@ export type { VerifyReport } from "../../../apps/desktop/src-tauri/bindings/back
 export type { VerifyErrorEntry } from "../../../apps/desktop/src-tauri/bindings/backup/VerifyErrorEntry";
 export type { VerifyErrorKind } from "../../../apps/desktop/src-tauri/bindings/backup/VerifyErrorKind";
 
+// Phase 17: projects view + actions wire types.
+export type { ProjectSummary } from "../../../apps/desktop/src-tauri/bindings/projects/ProjectSummary";
+export type { MemoryFileSummary } from "../../../apps/desktop/src-tauri/bindings/projects/MemoryFileSummary";
+
 // Hand-rolled UI summary type used by the sidebar; not on the IPC wire.
 import type { ToolId } from "../../../apps/desktop/src-tauri/bindings/registry/ToolId";
 

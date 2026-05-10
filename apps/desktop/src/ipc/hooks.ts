@@ -28,6 +28,7 @@ import type {
   FindingSummary,
   HealthSummary,
   PipelineEvent,
+  ProjectSummary,
   RestoreReport,
   VerifyReport,
   SaveOutcome,
@@ -42,6 +43,7 @@ import {
   backupSetAuto,
   backupStatus,
   backupVerify,
+  listProjects,
   getComponent,
   getComponentWithRaw,
   getExcludedToolIds,
@@ -91,6 +93,8 @@ export const QUERY_KEYS = {
   settings: ["settings"] as const,
   /** Phase 15 - backup status (manifest count, last run, auto flag). */
   backup: ["backup"] as const,
+  /** Phase 17 - projects discovered from indexed memory rows. */
+  projects: ["projects"] as const,
 } as const;
 
 const STALE_TOOLS_MS = 30_000;
@@ -603,6 +607,21 @@ export function useBackupSetAuto(): UseMutationResult<void, Error, boolean> {
 export function useBackupVerify(): UseMutationResult<VerifyReport, Error, void> {
   return useMutation({
     mutationFn: () => backupVerify(),
+  });
+}
+
+// ─── Phase 17 - projects view ──────────────────────────────────────────
+
+/**
+ * List every project surfaced by the index. Re-fetches when the
+ * pipeline-event invalidator fires the components key (a new memory
+ * file lands or an existing one disappears).
+ */
+export function useProjects(): UseQueryResult<ProjectSummary[], Error> {
+  return useQuery({
+    queryKey: QUERY_KEYS.projects,
+    queryFn: listProjects,
+    staleTime: 30_000,
   });
 }
 

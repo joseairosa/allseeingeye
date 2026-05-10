@@ -141,6 +141,21 @@ export function NavCostIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/**
+ * Folder-stack glyph for the Projects sidebar entry (Phase 17). The
+ * outline matches the other nav icons; renders in `currentColor` so
+ * it picks up the active-state accent automatically.
+ */
+export function NavProjectsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+      <path d="M7 11h10" />
+      <path d="M7 14h6" />
+    </svg>
+  );
+}
+
 export function SaveIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>

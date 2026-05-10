@@ -12,6 +12,7 @@ mod ipc;
 mod mcp;
 mod parser;
 mod pipeline;
+mod projects;
 mod registry;
 mod security;
 mod usage;
@@ -368,6 +369,8 @@ pub fn run() {
             ipc::commands::backup_status,
             ipc::commands::backup_set_auto,
             ipc::commands::backup_verify,
+            // Phase 17 - projects view.
+            ipc::commands::list_projects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
